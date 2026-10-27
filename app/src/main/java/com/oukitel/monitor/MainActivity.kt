@@ -46,13 +46,13 @@ class MainActivity : Activity() {
     private lateinit var refresh: TextView
     private val tick = object : Runnable {
         override fun run() {
-            if (active) { loadData(); handler.postDelayed(this, 30000L) }
+            if (active) { loadData(); handler.postDelayed(this, 5000L) }
         }
     }
 
-    override fun onCreate(savedInstanceState: Bundle?) { super.onCreate(savedInstanceState); showLogin() }
+    override fun onCreate(savedInstanceState: Bundle?) { super.onCreate(savedInstanceState); showLogin(); if (android.os.Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 100) }
     override fun onPause() { super.onPause(); handler.removeCallbacks(tick) }
-    override fun onResume() { super.onResume(); if (active) { handler.removeCallbacks(tick); handler.postDelayed(tick, 30000L) } }
+    override fun onResume() { super.onResume(); if (active) { handler.removeCallbacks(tick); handler.postDelayed(tick, 5000L) } }
     override fun onDestroy() { handler.removeCallbacks(tick); super.onDestroy() }
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density + .5f).toInt()
@@ -123,7 +123,7 @@ class MainActivity : Activity() {
     }
 
     private fun metric(icon: String, label: String, color: Int): Pair<LinearLayout, TextView> {
-        val tile = column().apply { background = shape(panel); setPadding(dp(14), dp(12), dp(10), dp(12)) }
+        val tile = column().apply { background = shape(panel); setPadding(dp(14), dp(15), dp(10), dp(15)); elevation=dp(5).toFloat() }
         add(tile, text("$icon   $label", 13f, muted))
         val value = text("—", 20f, white, true)
         add(tile, value)
@@ -162,17 +162,20 @@ class MainActivity : Activity() {
         second.addView(c.first, LinearLayout.LayoutParams(0, -2, 1f).apply { rightMargin = dp(5) })
         second.addView(d.first, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(5) })
         add(root, second); gap(root, 10)
-        val network = column().apply { background = shape(panel); setPadding(dp(14), dp(13), dp(14), dp(13)) }
-        add(network, text("⚡  Електромережа 230 В", 14f, muted))
-        mainsText = text("Перевіряємо…", 17f, green, true)
-        add(network, mainsText)
-        add(root, network); gap(root, 13)
+        val alertsButton = text("🔔   Створити сповіщення     ›", 17f, white, true).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            background = shape(Color.rgb(22, 59, 38), 20, Color.rgb(49, 116, 70))
+            elevation = dp(8).toFloat()
+            setPadding(dp(18), dp(20), dp(18), dp(20))
+        }
+        add(root, alertsButton); gap(root, 14)
+        alertsButton.setOnClickListener { showAlerts() }
         val logout = text("Вийти з облікового запису", 12f, muted).apply { gravity = Gravity.CENTER }
         add(root, logout)
         logout.setOnClickListener { session = null; showLogin() }
         refresh.setOnClickListener { loadData() }
         setContentView(ScrollView(this).apply { isFillViewport = true; addView(root) })
-        handler.removeCallbacks(tick); handler.postDelayed(tick, 30000L)
+        handler.removeCallbacks(tick); handler.postDelayed(tick, 5000L)
     }
 
     private fun applyTelemetry(t: Telemetry) {
@@ -180,7 +183,8 @@ class MainActivity : Activity() {
         batteryText.text = t.battery?.let { "$it%" } ?: "—%"
         inputText.text = t.input; outputText.text = t.output
         tempText.text = t.temperature; timeText.text = t.remaining
-        mainsText.text = t.mains
+        saveTelemetry(t)
+        checkAlerts(t.battery)
         updatedText.text = "Оновлено " + SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
     }
     private fun loadData() {
@@ -210,27 +214,100 @@ class MainActivity : Activity() {
         }
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
-            val cx = width / 2f; val density = resources.displayMetrics.density
-            val w = 162f * density; val h = 252f * density
-            val left = cx - w / 2; val top = (height - h) / 2f + 7 * density
-            val rect = RectF(left, top, left + w, top + h)
-            val p = Paint(Paint.ANTI_ALIAS_FLAG)
-            p.color = Color.rgb(55, 77, 75); p.style = Paint.Style.FILL
-            canvas.drawRoundRect(RectF(cx - 22*density, top - 13*density, cx + 22*density, top + 7*density), 7*density, 7*density, p)
-            p.color = Color.rgb(11, 32, 31); canvas.drawRoundRect(rect, 22*density, 22*density, p)
-            p.color = Color.rgb(142, 166, 163); p.style = Paint.Style.STROKE; p.strokeWidth = 3*density
-            canvas.drawRoundRect(rect, 22*density, 22*density, p)
-            p.style = Paint.Style.FILL
-            val inner = RectF(rect.left + 8*density, rect.top + 8*density, rect.right - 8*density, rect.bottom - 8*density)
-            val fillHeight = inner.height() * level.coerceIn(0,100) / 100f
-            if (fillHeight > 0f) {
-                canvas.save(); val path = Path().apply { addRoundRect(inner, 16*density, 16*density, Path.Direction.CW) }
-                canvas.clipPath(path)
-                p.shader = LinearGradient(inner.left, inner.bottom, inner.right, inner.top, intArrayOf(Color.rgb(0, 118, 57), Color.rgb(38, 248, 85), Color.rgb(130, 255, 137)), null, Shader.TileMode.CLAMP)
-                canvas.drawRect(inner.left, inner.bottom-fillHeight, inner.right, inner.bottom, p)
-                p.shader = null; canvas.restore()
+            val d = resources.displayMetrics.density
+            val cx = width / 2f; val cy = height / 2f
+            val radius = minOf(width / 2f - 36*d, height / 2f - 30*d).coerceAtLeast(40*d)
+            val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 26*d; strokeCap = Paint.Cap.ROUND }
+            val arc = RectF(cx-radius,cy-radius,cx+radius,cy+radius)
+            p.color = Color.rgb(30,62,45)
+            canvas.drawArc(arc,0f,360f,false,p)
+            p.color = green
+            p.shader = SweepGradient(cx,cy,intArrayOf(Color.rgb(0,145,68),green,Color.rgb(133,255,168),green),null)
+            canvas.drawArc(arc,-90f,360f*level.coerceIn(0,100)/100f,false,p)
+            p.shader = null
+        }
+    }
+
+    private data class AlertRule(val id: Long, val kind: String, val threshold: Int, val enabled: Boolean)
+    private fun prefs() = getSharedPreferences("oukitel", MODE_PRIVATE)
+    private fun getRules(): MutableList<AlertRule> {
+        val raw = prefs().getString("rules", "[]") ?: "[]"
+        val result = mutableListOf<AlertRule>()
+        val arr = org.json.JSONArray(raw)
+        for (i in 0 until arr.length()) {
+            val x = arr.getJSONObject(i)
+            result.add(AlertRule(x.optLong("id"), x.optString("kind"), x.optInt("threshold"), x.optBoolean("enabled", true)))
+        }
+        return result
+    }
+    private fun saveRules(rules: List<AlertRule>) {
+        val arr = org.json.JSONArray()
+        rules.forEach { r -> arr.put(JSONObject().put("id",r.id).put("kind",r.kind).put("threshold",r.threshold).put("enabled",r.enabled)) }
+        prefs().edit().putString("rules",arr.toString()).apply()
+    }
+    private fun showAlerts() {
+        active = false; handler.removeCallbacks(tick)
+        val root = column().apply { setBackgroundColor(bg); setPadding(dp(20),dp(26),dp(20),dp(26)) }
+        val back = text("‹   Назад",18f,green,true).apply { setPadding(0,dp(8),0,dp(8)) }
+        add(root,back); back.setOnClickListener { showDashboard(session?.name ?: "P1000E Plus"); loadData() }
+        gap(root,20)
+        add(root,text("Мої сповіщення",27f,white,true)); gap(root,8)
+        add(root,text("Власні пороги заряду станції",14f,muted)); gap(root,20)
+        val items = column(); add(root,items)
+        fun render() {
+            items.removeAllViews()
+            getRules().forEach { rule ->
+                val row = row().apply { background=shape(panel,16,Color.rgb(41,67,51)); setPadding(dp(12),dp(10),dp(8),dp(10)); elevation=dp(3).toFloat() }
+                val title = if(rule.kind=="below") "Заряд менше ${rule.threshold}%" else "Заряд досяг ${rule.threshold}%"
+                row.addView(text(title,16f,white,true),LinearLayout.LayoutParams(0,-2,1f))
+                val toggle = Switch(this).apply { isChecked=rule.enabled; setOnCheckedChangeListener { _,on -> saveRules(getRules().map { if(it.id==rule.id) it.copy(enabled=on) else it }) } }
+                row.addView(toggle)
+                val del = text("✕",22f,muted).apply { gravity=Gravity.CENTER; setPadding(dp(10),dp(8),dp(10),dp(8)) }
+                row.addView(del)
+                del.setOnClickListener { saveRules(getRules().filterNot { it.id==rule.id }); render() }
+                add(items,row); gap(items,10)
             }
         }
+        render(); gap(root,16)
+        val spinner = Spinner(this).apply { adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,arrayOf("Заряд менше", "Заряд досяг")) }
+        add(root,spinner); gap(root,8)
+        val number = EditText(this).apply { hint="Відсоток (1–100)"; inputType=InputType.TYPE_CLASS_NUMBER; setTextColor(white); setHintTextColor(muted); background=shape(panel); setPadding(dp(15),dp(14),dp(15),dp(14)) }
+        add(root,number); gap(root,12)
+        val create = text("＋   Додати сповіщення",17f,Color.BLACK,true).apply { gravity=Gravity.CENTER; background=shape(green,16); elevation=dp(7).toFloat(); setPadding(dp(12),dp(16),dp(12),dp(16)) }
+        add(root,create)
+        create.setOnClickListener {
+            val threshold=number.text.toString().toIntOrNull()
+            if(threshold==null || threshold !in 1..100) { Toast.makeText(this,"Вкажи число від 1 до 100",Toast.LENGTH_SHORT).show(); return@setOnClickListener }
+            val kind=if(spinner.selectedItemPosition==0) "below" else "reached"
+            val rules=getRules()
+            if(rules.any { it.kind==kind && it.threshold==threshold }) { Toast.makeText(this,"Таке правило вже існує",Toast.LENGTH_SHORT).show(); return@setOnClickListener }
+            rules.add(AlertRule(System.currentTimeMillis(),kind,threshold,true)); saveRules(rules)
+            number.text.clear(); render()
+        }
+        setContentView(ScrollView(this).apply { isFillViewport=true; addView(root) })
+    }
+    private fun checkAlerts(level: Int?) {
+        if(level==null) return
+        val p=prefs(); val previous=p.getInt("previous_level",-1)
+        if(previous>=0 && previous!=level) getRules().filter { it.enabled }.forEach { rule ->
+            val crossed=if(rule.kind=="below") previous>=rule.threshold && level<rule.threshold else previous<rule.threshold && level>=rule.threshold
+            if(crossed) notifyAlert(if(rule.kind=="below") "Заряд менше ${rule.threshold}%" else "Заряд досяг ${rule.threshold}%",level)
+        }
+        p.edit().putInt("previous_level",level).apply()
+    }
+    private fun notifyAlert(title: String, level: Int) {
+        val nm=getSystemService(android.app.NotificationManager::class.java)
+        val channel="charge_alerts"
+        nm.createNotificationChannel(android.app.NotificationChannel(channel,"Сповіщення заряду",android.app.NotificationManager.IMPORTANCE_HIGH))
+        val notification=android.app.Notification.Builder(this,channel).setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setContentTitle(title).setContentText("Поточний заряд: $level%").setAutoCancel(true).build()
+        nm.notify((System.currentTimeMillis()%Int.MAX_VALUE).toInt(),notification)
+    }
+    private fun saveTelemetry(t: Telemetry) {
+        prefs().edit().putInt("charge",t.battery ?: -1).putString("input",t.input).putString("output",t.output)
+            .putString("temp",t.temperature).putString("remaining",t.remaining)
+            .putString("updated",SimpleDateFormat("HH:mm:ss",Locale.getDefault()).format(Date())).apply()
+        MonitorWidget.updateAll(this)
     }
 
     private fun sha256(value: String): String = MessageDigest.getInstance("SHA-256")
