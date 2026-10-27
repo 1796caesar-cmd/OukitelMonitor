@@ -53,6 +53,33 @@ class MonitorService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
     override fun onDestroy() { handler.removeCallbacks(tick); super.onDestroy() }
 
+    private fun wakeCloud(session: JSONObject) {
+        val now = System.currentTimeMillis()
+        if (now - prefs.getLong("last_cloud_wake", 0L) < 300_000L) return
+        try {
+            val payload = JSONObject().apply {
+                put("data", "[{\"high_frequency_reporting\":3}]")
+                put("deviceList", org.json.JSONArray().put(JSONObject().apply {
+                    put("deviceKey", session.getString("dk"))
+                    put("productKey", session.getString("pk"))
+                }))
+                put("cacheTime",60); put("isCache",1); put("isCover",1)
+                put("dataFormat",0); put("type",2)
+            }
+            val c = URL(session.getString("base") + "/v2/binding/enduserapi/batchControlDevice").openConnection() as HttpURLConnection
+            try {
+                c.requestMethod="POST"; c.connectTimeout=10000; c.readTimeout=12000; c.doOutput=true
+                c.setRequestProperty("Authorization",session.getString("token"))
+                c.setRequestProperty("Content-Type","application/json")
+                c.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
+                if (c.responseCode in 200..299) {
+                    val result=JSONObject(c.inputStream.bufferedReader().use { it.readText() })
+                    if (result.optInt("code")==200) prefs.edit().putLong("last_cloud_wake",now).apply()
+                }
+            } finally { c.disconnect() }
+        } catch (_: Exception) { }
+    }
+
     private fun poll() {
         if (!busy.compareAndSet(false, true)) return
         Thread {
@@ -64,6 +91,7 @@ class MonitorService : Service() {
                 val cipher = Cipher.getInstance("AES/GCM/NoPadding")
                 cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(128, bytes.copyOfRange(0, 12)))
                 val session = JSONObject(String(cipher.doFinal(bytes.copyOfRange(12, bytes.size)), Charsets.UTF_8))
+                wakeCloud(session)
                 val query = "?pk=" + URLEncoder.encode(session.getString("pk"), "UTF-8") + "&dk=" + URLEncoder.encode(session.getString("dk"), "UTF-8")
                 val connection = URL(session.getString("base") + "/v2/binding/enduserapi/getDeviceBusinessAttributes" + query).openConnection() as HttpURLConnection
                 val response = try {
@@ -85,6 +113,7 @@ class MonitorService : Service() {
                 val battery = values[1]?.toInt()?.coerceIn(0, 100)
                 val input = values[4]
                 val output = values[5]
+                StatisticsStore.record(this, battery, input, output)
                 if (battery != null) {
                     val previous = prefs.getInt("previous_level", -1)
                     if (previous >= 0 && previous != battery) {

@@ -8,6 +8,13 @@ import javax.crypto.KeyGenerator
 import javax.crypto.spec.GCMParameterSpec
 import java.security.KeyStore
 import android.os.Bundle
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
+import android.os.Build
+import android.content.pm.PackageManager
+import android.app.NotificationManager
+import android.os.PowerManager
 import android.os.Handler
 import android.os.Looper
 import android.graphics.*
@@ -42,6 +49,17 @@ class MainActivity : Activity() {
     private var session: Session? = null
     private var busy = false
     private var active = false
+    private var currentScreen = "login"
+
+    @Deprecated("Use OnBackPressedDispatcher when migrating to AndroidX")
+    override fun onBackPressed() {
+        if (currentScreen == "settings" || currentScreen == "alerts" || currentScreen == "statistics") {
+            showDashboard(session?.name ?: "P1000E Plus")
+            loadData()
+        } else {
+            super.onBackPressed()
+        }
+    }
     private lateinit var batteryView: BatteryView
     private lateinit var batteryText: TextView
     private lateinit var inputText: TextView
@@ -89,6 +107,7 @@ class MainActivity : Activity() {
     private fun gap(parent: LinearLayout, px: Int) { parent.addView(View(this), LinearLayout.LayoutParams(1, dp(px))) }
 
     private fun showLogin() {
+        currentScreen = "login"
         active = false; handler.removeCallbacks(tick)
         val root = column().apply { setPadding(dp(24), dp(36), dp(24), dp(24)); background = forestBackground(); gravity = Gravity.CENTER_HORIZONTAL }
         gap(root, 40)
@@ -145,6 +164,7 @@ class MainActivity : Activity() {
     }
 
     private fun showDashboard(name: String) {
+        currentScreen = "dashboard"
         active = true
         MonitorService.start(this)
         val root = column().apply { background = forestBackground(); setPadding(dp(18), dp(22), dp(18), dp(24)) }
@@ -156,9 +176,6 @@ class MainActivity : Activity() {
         val actions = row().apply { gravity = Gravity.RIGHT }
         refresh = text("⟳  Оновити · —", 14f, green, true).apply { gravity = Gravity.CENTER; background = shape(panel, 18, green); setPadding(dp(12), dp(10), dp(12), dp(10)); elevation=dp(5).toFloat() }
         actions.addView(refresh)
-        val exit = text("⇥", 27f, green, true).apply { gravity = Gravity.CENTER; background = shape(panel, 15, green); setPadding(dp(12), dp(7), dp(12), dp(7)); elevation=dp(5).toFloat() }
-        actions.addView(exit, LinearLayout.LayoutParams(-2,-2).apply { leftMargin=dp(9) })
-        exit.setOnClickListener { confirmLogout() }
         updatedText = text("", 10f, muted)
         top.addView(actions)
         add(root, top)
@@ -167,14 +184,14 @@ class MainActivity : Activity() {
         batteryView = BatteryView()
         root.addView(batteryView, LinearLayout.LayoutParams(-1, dp(295)))
         batteryText = batteryView.percent
-        statusText = text("Очікування даних", 19f, green, true).apply { gravity = Gravity.CENTER; background = shape(Color.rgb(9, 71, 40), 25, green); setPadding(dp(15),dp(11),dp(15),dp(11)); elevation=dp(6).toFloat() }
+        statusText = text("Очікування даних", 19f, green, true).apply { gravity = Gravity.CENTER; background = shape(if (lightTheme) panel else Color.rgb(9, 71, 40), 25, green); setPadding(dp(15),dp(11),dp(15),dp(11)); elevation=dp(6).toFloat() }
         add(root, statusText)
         gap(root, 12)
         val first = row()
         val a = metric("↳", "Вхід", green); inputText = a.second
-        val b = metric("↗", "Вихід", Color.rgb(255, 180, 72)); outputText = b.second
+        outputText = text("", 12f)
         first.addView(a.first, LinearLayout.LayoutParams(0, -2, 1f).apply { rightMargin = dp(5) })
-        first.addView(b.first, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(5) })
+
         add(root, first); gap(root, 10)
         val second = row()
         val c = metric("♨", "Температура", Color.CYAN); tempText = c.second
@@ -184,11 +201,12 @@ class MainActivity : Activity() {
         add(root, second); gap(root, 10)
         val alertsButton = text("🔔   Сповіщення     ›", 17f, white, true).apply {
             gravity = Gravity.CENTER_VERTICAL
-            background = shape(Color.rgb(22, 59, 38), 20, Color.rgb(49, 116, 70))
+            background = shape(if (lightTheme) panel else Color.rgb(22, 59, 38), 20, green)
             elevation = dp(8).toFloat()
             setPadding(dp(18), dp(20), dp(18), dp(20))
         }
         add(root, alertsButton); gap(root, 14)
+        add(root, text("▤   Статистика     ›", 17f, white, true).apply { background=shape(panel,20,green); setPadding(dp(18),dp(18),dp(18),dp(18)); setOnClickListener { showStatistics() } }); gap(root, 12)
         add(root, text("⚙   Налаштування     ›", 17f, white, true).apply { background=shape(panel,20,green); setPadding(dp(18),dp(18),dp(18),dp(18)); setOnClickListener { showSettings() } }); gap(root, 12)
         alertsButton.setOnClickListener { showAlerts() }
         
@@ -198,6 +216,7 @@ class MainActivity : Activity() {
     }
 
     private fun showSettings() {
+        currentScreen = "settings"
         active = false; handler.removeCallbacks(tick)
         val root = column().apply { background=forestBackground(); setPadding(dp(20),dp(28),dp(20),dp(24)) }
         val back=text("‹   Головна",18f,green,true).apply { setPadding(0,dp(8),0,dp(8)) }
@@ -213,9 +232,70 @@ class MainActivity : Activity() {
             if (chosen != lightTheme) { prefs().edit().putBoolean("light_theme",chosen).apply(); window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(bg)); window.statusBarColor=bg; window.navigationBarColor=bg; showSettings() }
         }
         add(root,theme); gap(root,26)
+        addBackgroundSettings(root)
+        gap(root,26)
         val logout=text("⇥   Вийти з облікового запису",17f,white,true).apply { background=shape(panel,18,green); setPadding(dp(18),dp(18),dp(18),dp(18)); setOnClickListener { confirmLogout() } }
         add(root,logout)
         setContentView(ScrollView(this).apply { background=forestBackground(); isFillViewport=true; addView(root) })
+    }
+
+    private fun openSystemSettings(intent: Intent, fallback: Boolean = true) {
+        try { startActivity(intent) }
+        catch (_: Exception) {
+            if (fallback) {
+                try { startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))) }
+                catch (_: Exception) { Toast.makeText(this, "Не вдалося відкрити налаштування", Toast.LENGTH_LONG).show() }
+            }
+        }
+    }
+
+    private fun settingsItem(root: LinearLayout, title: String, detail: String, action: () -> Unit) {
+        val line = column().apply {
+            background = shape(panel, 18, green)
+            setPadding(dp(16), dp(14), dp(16), dp(14))
+            elevation = dp(4).toFloat()
+        }
+        add(line, text("$title   ›", 16f, white, true))
+        gap(line, 4)
+        add(line, text(detail, 12f, muted))
+        add(root, line)
+        gap(root, 10)
+        line.setOnClickListener { action() }
+    }
+
+    private fun addBackgroundSettings(root: LinearLayout) {
+        add(root, text("Фонова робота та дозволи", 19f, white, true))
+        gap(root, 8)
+        add(root, text("Для стабільної роботи на Xiaomi / HyperOS", 13f, muted))
+        gap(root, 14)
+        val notificationAllowed = Build.VERSION.SDK_INT < 33 || checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+        settingsItem(root, "🔔  Сповіщення " + if (notificationAllowed) "✓" else "— потрібен дозвіл", if (notificationAllowed) "Дозвіл на сповіщення надано" else "Натисни, щоб дозволити сповіщення") {
+            if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
+                requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 101)
+            else openSystemSettings(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, packageName))
+        }
+        settingsItem(root, "🚀  Автозапуск", "Відкрити налаштування автозапуску Xiaomi") {
+            val intent = Intent().apply {
+                setClassName("com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity")
+            }
+            try { startActivity(intent) }
+            catch (_: Exception) {
+                android.app.AlertDialog.Builder(this).setTitle("Автозапуск")
+                    .setMessage("Відкрий Налаштування Xiaomi → Програми → Дозволи → Автозапуск і дозволь OukitelMonitor. Розташування пункту залежить від HyperOS.")
+                    .setPositiveButton("Налаштування програми") { _, _ -> openSystemSettings(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))) }
+                    .setNegativeButton("Закрити", null).show()
+            }
+        }
+        val power = getSystemService(POWER_SERVICE) as PowerManager
+        val unrestricted = power.isIgnoringBatteryOptimizations(packageName)
+        settingsItem(root, "🔋  Батарея " + if (unrestricted) "✓" else "— перевірити", "Вибрати режим «Без обмежень» для OukitelMonitor") {
+            openSystemSettings(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
+        }
+        settingsItem(root, "📌  Закріпити програму", "Інструкція для меню останніх програм Xiaomi") {
+            android.app.AlertDialog.Builder(this).setTitle("Закріплення OukitelMonitor")
+                .setMessage("Відкрий список останніх програм, знайди OukitelMonitor та, якщо ця функція доступна у твоїй версії HyperOS, затисни картку й вибери значок замка. Це не гарантує безперервної роботи у фоні.")
+                .setPositiveButton("Зрозуміло", null).show()
+        }
     }
 
     private fun confirmLogout() {
@@ -238,6 +318,7 @@ class MainActivity : Activity() {
         statusText.text = state.second
         statusText.setTextColor(if (state.first == "outage") Color.rgb(255, 112, 112) else green)
         saveTelemetry(t)
+        StatisticsStore.record(this, t.battery, t.inputWatts, t.outputWatts)
         checkAlerts(t.battery)
         checkPowerAlerts(state.first, t.battery)
         val at = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
@@ -278,8 +359,8 @@ class MainActivity : Activity() {
             val arc = RectF(cx-radius,cy-radius,cx+radius,cy+radius)
             p.color = Color.rgb(30,62,45)
             canvas.drawArc(arc,0f,360f,false,p)
-            p.color = green
-            p.shader = SweepGradient(cx,cy,intArrayOf(Color.rgb(0,145,68),green,Color.rgb(133,255,168),green),null)
+            p.color = if (level <= 15) Color.rgb(238,82,73) else if (level <= 30) Color.rgb(244,180,62) else Color.rgb(43,203,101)
+            p.shader = null
             canvas.drawArc(arc,-90f,360f*level.coerceIn(0,100)/100f,false,p)
             p.shader = null
         }
@@ -303,6 +384,7 @@ class MainActivity : Activity() {
         prefs().edit().putString("rules",arr.toString()).apply()
     }
     private fun showAlerts() {
+        currentScreen = "alerts"
         active = false; handler.removeCallbacks(tick)
         val root = column().apply { background = forestBackground(); setPadding(dp(20),dp(26),dp(20),dp(26)) }
         val back = text("‹   Назад",18f,green,true).apply { setPadding(0,dp(8),0,dp(8)) }
@@ -466,44 +548,70 @@ class MainActivity : Activity() {
         return Session(config.first, token, pk, dk, name)
     }
 
-    private fun readTelemetry(s: Session): Telemetry {
-            try {
+    private fun wakeCloud(s: Session) {
+        val now = System.currentTimeMillis()
+        val p = prefs()
+        if (now - p.getLong("last_cloud_wake", 0L) < 300_000L) return
+        try {
             val payload = JSONObject().apply {
                 put("data", "[{\"high_frequency_reporting\":3}]")
-                put("deviceList", org.json.JSONArray().put(
-                    JSONObject().apply {
-                        put("deviceKey", s.dk)
-                        put("productKey", s.pk)
-                    }
-                ))
-                put("cacheTime", 60)
-                put("isCache", 1)
-                put("isCover", 1)
-                put("dataFormat", 0)
-                put("type", 2)
+                put("deviceList", org.json.JSONArray().put(JSONObject().apply {
+                    put("deviceKey", s.dk); put("productKey", s.pk)
+                }))
+                put("cacheTime", 60); put("isCache", 1); put("isCover", 1)
+                put("dataFormat", 0); put("type", 2)
             }
-
-            val conn = URL(
-                s.base + "/v2/binding/enduserapi/batchControlDevice"
-            ).openConnection() as HttpURLConnection
-
+            val c = URL(s.base + "/v2/binding/enduserapi/batchControlDevice").openConnection() as HttpURLConnection
             try {
-                conn.requestMethod = "POST"
-                conn.connectTimeout = 10000
-                conn.readTimeout = 12000
-                conn.doOutput = true
-                conn.setRequestProperty("Authorization", s.token)
-                conn.setRequestProperty("Content-Type", "application/json")
-                conn.outputStream.use {
-                    it.write(payload.toString().toByteArray(Charsets.UTF_8))
+                c.requestMethod = "POST"; c.connectTimeout = 10000; c.readTimeout = 12000
+                c.doOutput = true
+                c.setRequestProperty("Authorization", s.token)
+                c.setRequestProperty("Content-Type", "application/json")
+                c.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
+                if (c.responseCode in 200..299) {
+                    val result = JSONObject(c.inputStream.bufferedReader().use { it.readText() })
+                    if (result.optInt("code") == 200) p.edit().putLong("last_cloud_wake", now).apply()
                 }
-                conn.inputStream.close()
-            } finally {
-                conn.disconnect()
+            } finally { c.disconnect() }
+        } catch (_: Exception) { /* Normal polling remains available. */ }
+    }
+
+    private fun showStatistics() {
+        currentScreen = "statistics"
+        active = false; handler.removeCallbacks(tick)
+        val root = column().apply { background = forestBackground(); setPadding(dp(18),dp(22),dp(18),dp(22)) }
+        val back = text("‹   Головна",18f,green,true).apply { setPadding(0,dp(8),0,dp(8)); setOnClickListener { showDashboard(session?.name ?: "P1000E Plus"); loadData() } }
+        add(root,back); gap(root,18)
+        add(root,text("Статистика",29f,white,true)); gap(root,12)
+        val periods = arrayOf("24 години", "7 днів", "30 днів")
+        val picker = Spinner(this)
+        picker.adapter = ArrayAdapter(this,android.R.layout.simple_spinner_dropdown_item,periods)
+        add(root,picker); gap(root,14)
+        val batteryTitle = text("Заряд акумулятора, %",18f,white,true)
+        add(root,batteryTitle); gap(root,8)
+        val batteryChart = StatisticsChart(this, false, lightTheme)
+        add(root,batteryChart,height=dp(230)); gap(root,24)
+        add(root,text("Потужність, Вт",18f,white,true)); gap(root,8)
+        val powerChart = StatisticsChart(this, true, lightTheme)
+        add(root,powerChart,height=dp(230)); gap(root,12)
+        add(root,text("● Вхідна потужність     ● Вихідна потужність",13f,muted))
+        gap(root,12)
+        add(root,text("Дані записуються приблизно кожні 15 хвилин, коли працює фонова служба. Пропущені вимірювання не домальовуються.",13f,muted))
+        picker.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
+            override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: View?, position: Int, id: Long) {
+                val hours = when(position) { 0 -> 24; 1 -> 168; else -> 720 }
+                val entries = StatisticsStore.read(this@MainActivity, hours)
+                batteryChart.setEntries(entries); powerChart.setEntries(entries)
             }
-        } catch (_: Exception) {
-            // Якщо команда не спрацює, звичайне читання продовжиться.
         }
+        val entries = StatisticsStore.read(this,24)
+        batteryChart.setEntries(entries); powerChart.setEntries(entries)
+        setContentView(ScrollView(this).apply { background=forestBackground(); addView(root) })
+    }
+
+    private fun readTelemetry(s: Session): Telemetry {
+        wakeCloud(s)
         val query = "?pk=" + URLEncoder.encode(s.pk, "UTF-8") + "&dk=" + URLEncoder.encode(s.dk, "UTF-8")
         val response = request(s.base + "/v2/binding/enduserapi/getDeviceBusinessAttributes" + query, "GET", null, s.token)
         val code = response.optInt("code", 200)
