@@ -23,6 +23,10 @@ class MainActivity : Activity() {
     private val white = Color.WHITE
     private lateinit var status: TextView
     private lateinit var loginButton: Button
+    private lateinit var refreshButton: Button
+    private var lastEmail = ""
+    private var lastPassword = ""
+    private var lastRegion = "EU"
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -37,7 +41,7 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER; setPadding(0, 12, 0, 12)
         }
         root.addView(label("OukitelMonitor", 29f, white))
-        root.addView(label("Wonderfree · Перевірка підключення", 16f, green))
+        root.addView(label("Wonderfree · Моніторинг 0.3", 16f, green))
         val email = EditText(this).apply {
             hint = "Email Wonderfree"; setSingleLine(true)
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS
@@ -56,20 +60,37 @@ class MainActivity : Activity() {
         root.addView(region)
         loginButton = Button(this).apply { text = "Підключитися" }
         root.addView(loginButton)
-        status = label("Це тест авторизації та пошуку станції. Дані не зберігаються.", 15f, white)
+        refreshButton = Button(this).apply { text = "Оновити дані"; isEnabled = false }
+        root.addView(refreshButton)
+        status = label("Введи дані Wonderfree, щоб отримати показники. Пароль не записується на диск.", 15f, white)
         root.addView(status)
         setContentView(ScrollView(this).apply { addView(root) })
         loginButton.setOnClickListener {
             val e = email.text.toString().trim()
             val p = password.text.toString()
             if (e.isBlank() || p.isBlank()) { status.text = "Введи email і пароль"; return@setOnClickListener }
+            lastEmail = e
+            lastPassword = p
+            lastRegion = regions[region.selectedItemPosition]
             loginButton.isEnabled = false
+            refreshButton.isEnabled = false
             status.text = "Підключення до Wonderfree…"
             val selected = regions[region.selectedItemPosition]
             Thread {
                 val result = try { testConnection(e, p, selected) }
                     catch (ex: Exception) { "Помилка: ${ex.message ?: ex.javaClass.simpleName}" }
-                runOnUiThread { status.text = result; loginButton.isEnabled = true }
+                runOnUiThread { status.text = result; loginButton.isEnabled = true; refreshButton.isEnabled = true }
+            }.start()
+        }
+        refreshButton.setOnClickListener {
+            if (lastEmail.isBlank() || lastPassword.isBlank()) return@setOnClickListener
+            loginButton.isEnabled = false
+            refreshButton.isEnabled = false
+            status.text = "Оновлюю показники…"
+            Thread {
+                val result = try { testConnection(lastEmail, lastPassword, lastRegion) }
+                    catch (ex: Exception) { "Помилка: ${ex.message ?: ex.javaClass.simpleName}" }
+                runOnUiThread { status.text = result; loginButton.isEnabled = true; refreshButton.isEnabled = true }
             }.start()
         }
     }
@@ -112,7 +133,29 @@ class MainActivity : Activity() {
                 ?: d?.optString("productName")?.takeIf { it.isNotBlank() }
                 ?: "Пристрій ${index + 1}"
         }
-        return "Авторизація успішна! Знайдено пристроїв: ${list.length()}\n" + names.joinToString("\n")
+        val device = list.optJSONObject(0) ?: return "Не вдалося прочитати дані станції"
+        val pk = device.optString("productKey")
+        val dk = device.optString("deviceKey")
+        if (pk.isBlank() || dk.isBlank()) return "Станцію знайдено, але немає її ідентифікаторів"
+        val query = "?pk=" + URLEncoder.encode(pk, "UTF-8") + "&dk=" + URLEncoder.encode(dk, "UTF-8")
+        val attributes = request(config.first + "/v2/binding/enduserapi/getDeviceBusinessAttributes" + query, "GET", null, token)
+        val code = attributes.optInt("code", 200)
+        if (code != 0 && code != 200) return "Станцію знайдено: ${names[0]}\nХмара не повернула показники: " + attributes.optString("msg", "код $code")
+        val items = attributes.optJSONObject("data")?.optJSONArray("customizeTslInfo")
+            ?: return "Станцію знайдено: ${names[0]}\nСписок показників відсутній у відповіді хмари."
+        val values = mutableMapOf<Int, String>()
+        for (i in 0 until items.length()) {
+            val item = items.optJSONObject(i) ?: continue
+            val tag = item.optInt("abId", -1)
+            val value = item.optString("resourceValce", "")
+            if (tag >= 0 && value.isNotBlank() && value != "null") values[tag] = value
+        }
+        fun value(tag: Int, unit: String): String {
+            val raw = values[tag] ?: return "—"
+            val number = raw.toDoubleOrNull() ?: return raw
+            return (if (number % 1.0 == 0.0) number.toLong().toString() else number.toString()) + unit
+        }
+        return "${names[0]}\n🔋 Заряд: ${value(1, "%")}\n⚡ Вхід: ${value(4, " Вт")}\n🔌 Вихід: ${value(5, " Вт")}\n\nОтримано полів: ${values.size}. Натисни «Оновити дані», щоб перевірити ще раз."
     }
 
     private fun request(url: String, method: String, form: String?, token: String?): JSONObject {
