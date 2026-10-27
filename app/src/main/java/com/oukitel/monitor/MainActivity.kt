@@ -467,6 +467,43 @@ class MainActivity : Activity() {
     }
 
     private fun readTelemetry(s: Session): Telemetry {
+            try {
+            val payload = JSONObject().apply {
+                put("data", "[{\"high_frequency_reporting\":3}]")
+                put("deviceList", org.json.JSONArray().put(
+                    JSONObject().apply {
+                        put("deviceKey", s.dk)
+                        put("productKey", s.pk)
+                    }
+                ))
+                put("cacheTime", 60)
+                put("isCache", 1)
+                put("isCover", 1)
+                put("dataFormat", 0)
+                put("type", 2)
+            }
+
+            val conn = URL(
+                s.base + "/v2/binding/enduserapi/batchControlDevice"
+            ).openConnection() as HttpURLConnection
+
+            try {
+                conn.requestMethod = "POST"
+                conn.connectTimeout = 10000
+                conn.readTimeout = 12000
+                conn.doOutput = true
+                conn.setRequestProperty("Authorization", s.token)
+                conn.setRequestProperty("Content-Type", "application/json")
+                conn.outputStream.use {
+                    it.write(payload.toString().toByteArray(Charsets.UTF_8))
+                }
+                conn.inputStream.close()
+            } finally {
+                conn.disconnect()
+            }
+        } catch (_: Exception) {
+            // Якщо команда не спрацює, звичайне читання продовжиться.
+        }
         val query = "?pk=" + URLEncoder.encode(s.pk, "UTF-8") + "&dk=" + URLEncoder.encode(s.dk, "UTF-8")
         val response = request(s.base + "/v2/binding/enduserapi/getDeviceBusinessAttributes" + query, "GET", null, s.token)
         val code = response.optInt("code", 200)
