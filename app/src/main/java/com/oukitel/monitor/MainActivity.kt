@@ -39,12 +39,24 @@ import java.util.Date
 import java.util.Locale
 
 class MainActivity : Activity() {
-    private val bg get() = if (lightTheme) Color.rgb(242, 250, 246) else Color.rgb(5, 14, 17)
-    private val panel get() = if (lightTheme) Color.rgb(225, 246, 234) else Color.rgb(13, 49, 43)
-    private val green get() = if (lightTheme) Color.rgb(13, 145, 71) else Color.rgb(57, 250, 108)
-    private val white get() = if (lightTheme) Color.rgb(17, 53, 40) else Color.WHITE
-    private val muted get() = if (lightTheme) Color.rgb(77, 120, 98) else Color.rgb(183, 223, 202)
-    private val lightTheme get() = getSharedPreferences("oukitel", MODE_PRIVATE).getBoolean("light_theme", false)
+    // Six cohesive glass-style palettes; battery alert colors are deliberately independent.
+    private data class Palette(val name: String, val bg: Int, val panel: Int, val tile: Int, val accent: Int, val ink: Int, val soft: Int)
+    private fun rgb(hex: Long): Int = (0xff000000L or hex).toInt()
+    private val palettes = listOf(
+        Palette("Смарагд", rgb(0x103B37), rgb(0x235D56), rgb(0x316F67), rgb(0x72D8BB), rgb(0xF5FFFB), rgb(0xC1E4DB)),
+        Palette("Океан", rgb(0x153A64), rgb(0x275A8A), rgb(0x346EA0), rgb(0x7DCBFF), rgb(0xF5FAFF), rgb(0xC3DDF3)),
+        Palette("Аметист", rgb(0x352457), rgb(0x534078), rgb(0x6B5291), rgb(0xC7A5FF), rgb(0xFCF7FF), rgb(0xDFD0F3)),
+        Palette("Рубін", rgb(0x572A40), rgb(0x81425B), rgb(0x9D5770), rgb(0xFFB1C7), rgb(0xFFF7FA), rgb(0xF1CCD8)),
+        Palette("Бурштин", rgb(0x61402E), rgb(0x896047), rgb(0xA87958), rgb(0xFFD09B), rgb(0xFFF9F2), rgb(0xF3DCC4)),
+        Palette("Сапфір", rgb(0x253451), rgb(0x405575), rgb(0x556D90), rgb(0xA9C8FF), rgb(0xF7FAFF), rgb(0xCEDBF0))
+    )
+    private val palette get() = palettes[getSharedPreferences("oukitel", MODE_PRIVATE).getInt("palette_index", 0).coerceIn(0, palettes.lastIndex)]
+    private val bg get() = palette.bg
+    private val panel get() = palette.panel
+    private val green get() = palette.accent
+    private val white get() = palette.ink
+    private val muted get() = palette.soft
+    private val lightTheme get() = false
     private val handler = Handler(Looper.getMainLooper())
     private var session: Session? = null
     private var busy = false
@@ -66,6 +78,7 @@ class MainActivity : Activity() {
     private lateinit var outputText: TextView
     private lateinit var tempText: TextView
     private lateinit var timeText: TextView
+    private lateinit var timeLabel: TextView
     private lateinit var statusText: TextView
     private lateinit var updatedText: TextView
     private lateinit var refresh: TextView
@@ -84,13 +97,18 @@ class MainActivity : Activity() {
     // Built-in gradient stays stable when the soft keyboard resizes the window.
     private fun forestBackground(): GradientDrawable = GradientDrawable(
         GradientDrawable.Orientation.TL_BR,
-        if (lightTheme) intArrayOf(Color.rgb(250,255,252),Color.rgb(222,248,234),Color.rgb(238,252,244),Color.rgb(249,255,251)) else intArrayOf(Color.rgb(5, 17, 22), Color.rgb(9, 65, 51),Color.rgb(7, 42, 38), Color.rgb(4, 17, 22))
+        intArrayOf(blend(bg, Color.WHITE, .08f), bg, blend(bg, panel, .55f), blend(bg, Color.BLACK, .12f))
     )
-
+    private fun blend(a: Int, b: Int, ratio: Float): Int {
+        val r = ratio.coerceIn(0f, 1f)
+        return Color.rgb((Color.red(a)*(1-r)+Color.red(b)*r).toInt(), (Color.green(a)*(1-r)+Color.green(b)*r).toInt(), (Color.blue(a)*(1-r)+Color.blue(b)*r).toInt())
+    }
     private fun dp(v: Int) = (v * resources.displayMetrics.density + .5f).toInt()
     private fun shape(color: Int, radius: Int = 17, stroke: Int? = null): GradientDrawable = GradientDrawable().apply {
-        colors = if (lightTheme) intArrayOf(Color.rgb(255,255,255), color, Color.rgb(200,235,214)) else intArrayOf(Color.rgb(37, 105, 88), color, Color.rgb(5, 49, 30)); orientation = GradientDrawable.Orientation.TL_BR; cornerRadius = dp(radius).toFloat()
-        if (stroke != null) setStroke(dp(1), stroke)
+        colors = intArrayOf(blend(color, Color.WHITE, .23f), blend(color, Color.WHITE, .08f), color, blend(color, Color.BLACK, .16f))
+        orientation = GradientDrawable.Orientation.TL_BR
+        cornerRadius = dp(radius).toFloat()
+        setStroke(dp(1), stroke ?: blend(color, Color.WHITE, .33f))
     }
     private fun text(value: String, size: Float, color: Int = white, bold: Boolean = false): TextView = TextView(this).apply {
         this.text = value; textSize = size; setTextColor(color)
@@ -156,7 +174,7 @@ class MainActivity : Activity() {
     }
 
     private fun metric(icon: String, label: String, color: Int): Pair<LinearLayout, TextView> {
-        val tile = column().apply { background = shape(panel, 23, Color.rgb(110, 215, 193)); setPadding(dp(15), dp(19), dp(12), dp(19)); elevation=dp(9).toFloat() }
+        val tile = column().apply { background = shape(palette.tile, 23, green); setPadding(dp(15), dp(19), dp(12), dp(19)); elevation=dp(9).toFloat() }
         add(tile, text("$icon  $label", 16f, white, true))
         val value = text("—", 29f, white, true)
         add(tile, value)
@@ -174,7 +192,7 @@ class MainActivity : Activity() {
         add(heading, text(name, 13f, muted))
         top.addView(heading, LinearLayout.LayoutParams(0, -2, 1f))
         val actions = row().apply { gravity = Gravity.RIGHT }
-        refresh = text("⟳  Оновити · —", 14f, green, true).apply { gravity = Gravity.CENTER; background = shape(panel, 18, green); setPadding(dp(12), dp(10), dp(12), dp(10)); elevation=dp(5).toFloat() }
+        refresh = text("⟳  Оновити · —", 14f, green, true).apply { gravity = Gravity.CENTER; background = shape(palette.tile, 18, green); setPadding(dp(12), dp(10), dp(12), dp(10)); elevation=dp(5).toFloat() }
         actions.addView(refresh)
         updatedText = text("", 10f, muted)
         top.addView(actions)
@@ -196,7 +214,7 @@ class MainActivity : Activity() {
         add(root, first); gap(root, 10)
         val second = row()
         val c = metric("♨", "Температура", Color.CYAN); tempText = c.second
-        val d = metric("◷", "Час роботи", Color.MAGENTA); timeText = d.second
+        val d = metric("◷", "Час роботи", Color.MAGENTA); timeText = d.second; timeLabel = d.first.getChildAt(0) as TextView
         second.addView(c.first, LinearLayout.LayoutParams(0, -2, 1f).apply { rightMargin = dp(5) })
         second.addView(d.first, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(5) })
         add(root, second); gap(root, 10)
@@ -224,15 +242,29 @@ class MainActivity : Activity() {
         add(root,back); back.setOnClickListener { showDashboard(session?.name ?: "P1000E Plus"); loadData() }
         gap(root,24); add(root,text("Налаштування",29f,white,true)); gap(root,20)
         add(root,text("Тема оформлення",18f,white,true)); gap(root,12)
-        val theme = android.widget.RadioGroup(this).apply { orientation=android.widget.RadioGroup.VERTICAL; background=shape(panel,18,green); setPadding(dp(16),dp(10),dp(16),dp(10)) }
-        val dark=android.widget.RadioButton(this).apply { text="Темна"; setTextColor(white); id=View.generateViewId() }
-        val light=android.widget.RadioButton(this).apply { text="Світла"; setTextColor(white); id=View.generateViewId() }
-        theme.addView(dark); theme.addView(light); theme.check(if(lightTheme) light.id else dark.id)
-        theme.setOnCheckedChangeListener { _,id ->
-            val chosen=id==light.id
-            if (chosen != lightTheme) { prefs().edit().putBoolean("light_theme",chosen).apply(); window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(bg)); window.statusBarColor=bg; window.navigationBarColor=bg; showSettings() }
-        }
-        add(root,theme); gap(root,26)
+        val chosenName = text(palette.name, 18f, green, true).apply { gravity = Gravity.CENTER }
+        add(root, chosenName); gap(root, 8)
+        val chooser = SeekBar(this).apply { max = palettes.lastIndex; progress = prefs().getInt("palette_index", 0).coerceIn(0,palettes.lastIndex) }
+        add(root, chooser)
+        val legend = text("Смарагд   ·   Океан   ·   Аметист   ·   Рубін   ·   Бурштин   ·   Сапфір", 12f, muted)
+        add(root, legend); gap(root, 8)
+        add(root, text("Повзунок змінює фон, картки, кнопки та графіки. Кольори заряду незмінні.", 13f, muted))
+        chooser.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(bar: SeekBar?, progress: Int, fromUser: Boolean) {
+                chosenName.text = palettes[progress].name
+                if (fromUser) chosenName.setTextColor(palettes[progress].accent)
+            }
+            override fun onStartTrackingTouch(bar: SeekBar?) {}
+            override fun onStopTrackingTouch(bar: SeekBar?) {
+                val value = chooser.progress
+                if (value != prefs().getInt("palette_index",0)) {
+                    prefs().edit().putInt("palette_index",value).apply()
+                    window.statusBarColor=bg; window.navigationBarColor=bg
+                    showSettings()
+                }
+            }
+        })
+        gap(root,26)
         addBackgroundSettings(root)
         gap(root,26)
         val logout=text("⇥   Вийти з облікового запису",17f,white,true).apply { background=shape(panel,18,green); setPadding(dp(18),dp(18),dp(18),dp(18)); setOnClickListener { confirmLogout() } }
@@ -314,7 +346,18 @@ class MainActivity : Activity() {
         batteryView.level = t.battery ?: 0
         batteryText.text = t.battery?.let { "$it%" } ?: "—%"
         inputText.text = t.input; outputText.text = t.output
-        tempText.text = t.temperature; timeText.text = t.remaining
+        tempText.text = t.temperature
+        val charging = t.inputWatts != null && t.outputWatts != null && t.inputWatts > t.outputWatts && t.inputWatts > 0.0
+        timeLabel.text = if (charging) "◷  До повного заряду" else "◷  Час роботи"
+        timeText.text = if (charging) {
+            val percent = t.battery
+            val net = t.inputWatts!! - t.outputWatts!!
+            if (percent == 100) "Заряджено" else if (percent != null && net > 15.0) {
+                // Nominal 1024 Wh battery: estimate only, not an API-reported ETA.
+                val minutes = kotlin.math.ceil(((100-percent)/100.0 * 1024.0 / net) * 60.0).toLong()
+                "≈ ${minutes/60} год ${minutes%60} хв"
+            } else "—"
+        } else t.remaining
         val state = PowerMode.update(this, t.inputWatts, t.outputWatts, t.battery)
         statusText.text = state.second
         statusText.setTextColor(if (state.first == "battery") Color.rgb(255, 112, 112) else green)
@@ -363,6 +406,9 @@ class MainActivity : Activity() {
             p.color = if (level <= 15) Color.rgb(238,82,73) else if (level <= 30) Color.rgb(244,180,62) else Color.rgb(43,203,101)
             p.shader = null
             canvas.drawArc(arc,-90f,360f*level.coerceIn(0,100)/100f,false,p)
+            val highlight = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 3*d; strokeCap = Paint.Cap.ROUND; color = Color.argb(105,255,255,255) }
+            val inner = RectF(arc.left+8*d,arc.top+8*d,arc.right-8*d,arc.bottom-8*d)
+            canvas.drawArc(inner,-90f,360f*level.coerceIn(0,100)/100f,false,highlight)
             p.shader = null
         }
     }
@@ -420,8 +466,21 @@ class MainActivity : Activity() {
             }
         }
         render(); gap(root,16)
-        val spinner = Spinner(this).apply { adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,arrayOf("Заряд менше", "Заряд досяг")) }
-        add(root,spinner); gap(root,8)
+        var selectedKind = "below"
+        val selector = row()
+        val belowButton = text("↓  Заряд менше", 16f, white, true).apply { gravity=Gravity.CENTER; setPadding(dp(8),dp(16),dp(8),dp(16)) }
+        val reachedButton = text("↑  Заряд досяг", 16f, white, true).apply { gravity=Gravity.CENTER; setPadding(dp(8),dp(16),dp(8),dp(16)) }
+        fun paintSelector() {
+            belowButton.background=shape(if(selectedKind=="below") green else palette.tile,18,if(selectedKind=="below") Color.WHITE else muted)
+            reachedButton.background=shape(if(selectedKind=="reached") green else palette.tile,18,if(selectedKind=="reached") Color.WHITE else muted)
+            belowButton.setTextColor(if(selectedKind=="below") bg else white)
+            reachedButton.setTextColor(if(selectedKind=="reached") bg else white)
+        }
+        selector.addView(belowButton,LinearLayout.LayoutParams(0,-2,1f).apply { rightMargin=dp(5) })
+        selector.addView(reachedButton,LinearLayout.LayoutParams(0,-2,1f).apply { leftMargin=dp(5) })
+        belowButton.setOnClickListener { selectedKind="below"; paintSelector() }
+        reachedButton.setOnClickListener { selectedKind="reached"; paintSelector() }
+        paintSelector(); add(root,selector); gap(root,12)
         val number = EditText(this).apply { hint="Відсоток (1–100)"; inputType=InputType.TYPE_CLASS_NUMBER; setTextColor(white); setHintTextColor(muted); background=shape(panel); setPadding(dp(15),dp(14),dp(15),dp(14)) }
         add(root,number); gap(root,12)
         val create = text("＋   Додати сповіщення",17f,Color.BLACK,true).apply { gravity=Gravity.CENTER; background=shape(green,16); elevation=dp(7).toFloat(); setPadding(dp(12),dp(16),dp(12),dp(16)) }
@@ -429,7 +488,7 @@ class MainActivity : Activity() {
         create.setOnClickListener {
             val threshold=number.text.toString().toIntOrNull()
             if(threshold==null || threshold !in 1..100) { Toast.makeText(this,"Вкажи число від 1 до 100",Toast.LENGTH_SHORT).show(); return@setOnClickListener }
-            val kind=if(spinner.selectedItemPosition==0) "below" else "reached"
+            val kind=selectedKind
             val rules=getRules()
             if(rules.any { it.kind==kind && it.threshold==threshold }) { Toast.makeText(this,"Таке правило вже існує",Toast.LENGTH_SHORT).show(); return@setOnClickListener }
             rules.add(AlertRule(System.currentTimeMillis(),kind,threshold,true)); saveRules(rules)
@@ -573,7 +632,13 @@ class MainActivity : Activity() {
         add(root,text("Статистика",29f,white,true)); gap(root,12)
         val periods = arrayOf("24 години", "7 днів", "30 днів")
         val picker = Spinner(this)
-        picker.adapter = ArrayAdapter(this,android.R.layout.simple_spinner_dropdown_item,periods)
+        picker.adapter = object : ArrayAdapter<String>(this, android.R.layout.simple_spinner_dropdown_item, periods) {
+            override fun getView(position: Int, convertView: View?, parent: android.view.ViewGroup): View =
+                super.getView(position,convertView,parent).also { (it as? TextView)?.setTextColor(white); it.setPadding(dp(12),dp(10),dp(12),dp(10)) }
+            override fun getDropDownView(position: Int, convertView: View?, parent: android.view.ViewGroup): View =
+                super.getDropDownView(position,convertView,parent).also { (it as? TextView)?.setTextColor(Color.rgb(25,40,50)) }
+        }
+        picker.background=shape(palette.tile,16,green)
         add(root,picker); gap(root,14)
         val detail = text("Натисни на точку графіка, щоб переглянути запис", 14f, white).apply {
             background = shape(panel, 15, green)
@@ -581,10 +646,10 @@ class MainActivity : Activity() {
         }
         val batteryTitle = text("Заряд акумулятора, %",18f,white,true)
         add(root,batteryTitle); gap(root,8)
-        val batteryChart = StatisticsChart(this, false, lightTheme)
+        val batteryChart = StatisticsChart(this, false, false).apply { background=shape(palette.tile,20,green); elevation=dp(5).toFloat() }
         add(root,batteryChart,height=dp(230)); gap(root,24)
         add(root,text("Потужність, Вт",18f,white,true)); gap(root,8)
-        val powerChart = StatisticsChart(this, true, lightTheme)
+        val powerChart = StatisticsChart(this, true, false).apply { background=shape(palette.tile,20,green); elevation=dp(5).toFloat() }
         add(root,powerChart,height=dp(230)); gap(root,12)
         add(root,text("● Вхідна потужність     ● Вихідна потужність",13f,muted))
         gap(root,12)
