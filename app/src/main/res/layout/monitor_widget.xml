@@ -1,10 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:id="@+id/widget_root" android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical" android:padding="16dp" android:background="@drawable/widget_bg">
-<TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="OUKITEL MONITOR" android:textColor="#A3C8AF" android:textSize="12sp" android:textStyle="bold"/>
-<TextView android:id="@+id/widget_charge" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="—%" android:textColor="#30F26A" android:textSize="44sp" android:textStyle="bold"/>
-<TextView android:id="@+id/widget_input" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="#FFFFFF" android:textSize="14sp"/>
-<TextView android:id="@+id/widget_output" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="#FFFFFF" android:textSize="14sp"/>
-<TextView android:id="@+id/widget_temp" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="#FFFFFF" android:textSize="14sp"/>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:id="@+id/widget_root" android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical" android:padding="9dp" android:background="@drawable/widget_bg">
+<LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical" android:orientation="horizontal">
+<TextView android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:text="OUKITEL MONITOR" android:textColor="#A3C8AF" android:textSize="11sp" android:textStyle="bold"/>
+<TextView android:id="@+id/widget_refresh" android:layout_width="42dp" android:layout_height="36dp" android:gravity="center" android:text="⟳" android:contentDescription="Оновити дані" android:textColor="#30F26A" android:textSize="28sp"/>
+</LinearLayout>
+<LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical">
+<TextView android:id="@+id/widget_charge" android:layout_width="112dp" android:layout_height="wrap_content" android:gravity="center" android:text="—%" android:textColor="#30F26A" android:textSize="42sp" android:textStyle="bold"/>
+<LinearLayout android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:orientation="vertical">
+<TextView android:id="@+id/widget_input" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="#FFFFFF" android:textSize="15sp"/>
+<TextView android:id="@+id/widget_output" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="#FFFFFF" android:textSize="15sp"/>
+<TextView android:id="@+id/widget_temp" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="#FFFFFF" android:textSize="15sp"/>
 <TextView android:id="@+id/widget_time" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="#FFFFFF" android:textSize="14sp"/>
+</LinearLayout>
+</LinearLayout>
 <TextView android:id="@+id/widget_updated" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="#A3C8AF" android:textSize="11sp"/>
 </LinearLayout>

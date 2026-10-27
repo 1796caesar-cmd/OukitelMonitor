@@ -1,6 +1,12 @@
 package com.oukitel.monitor
 
 import android.app.Activity
+import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyProperties
+import android.content.Context
+import javax.crypto.KeyGenerator
+import javax.crypto.spec.GCMParameterSpec
+import java.security.KeyStore
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -41,7 +47,7 @@ class MainActivity : Activity() {
     private lateinit var outputText: TextView
     private lateinit var tempText: TextView
     private lateinit var timeText: TextView
-    private lateinit var mainsText: TextView
+    private lateinit var statusText: TextView
     private lateinit var updatedText: TextView
     private lateinit var refresh: TextView
     private val tick = object : Runnable {
@@ -50,9 +56,10 @@ class MainActivity : Activity() {
         }
     }
 
-    override fun onCreate(savedInstanceState: Bundle?) { super.onCreate(savedInstanceState); showLogin(); if (android.os.Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 100) }
+    override fun onCreate(savedInstanceState: Bundle?) { super.onCreate(savedInstanceState); restoreSession(); if (android.os.Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 100) }
     override fun onPause() { super.onPause(); handler.removeCallbacks(tick) }
-    override fun onResume() { super.onResume(); if (active) { handler.removeCallbacks(tick); handler.postDelayed(tick, 5000L) } }
+    override fun onResume() { super.onResume(); if (active) { handler.removeCallbacks(tick); loadData(); handler.postDelayed(tick, 5000L) } }
+    override fun onNewIntent(intent: android.content.Intent?) { super.onNewIntent(intent); if (active && intent?.getBooleanExtra("refresh_widget",false) == true) loadData() }
     override fun onDestroy() { handler.removeCallbacks(tick); super.onDestroy() }
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density + .5f).toInt()
@@ -113,7 +120,7 @@ class MainActivity : Activity() {
                 try {
                     val s = connect(e, p, selected)
                     val t = readTelemetry(s)
-                    runOnUiThread { session = s; showDashboard(s.name); applyTelemetry(t) }
+                    runOnUiThread { session = s; saveSession(s); showDashboard(s.name); applyTelemetry(t) }
                 } catch (ex: Exception) {
                     runOnUiThread { message.text = "Помилка: ${ex.message ?: "немає з’єднання"}"; button.isEnabled = true }
                 }
@@ -149,6 +156,8 @@ class MainActivity : Activity() {
         batteryView = BatteryView()
         root.addView(batteryView, LinearLayout.LayoutParams(-1, dp(295)))
         batteryText = batteryView.percent
+        statusText = text("Очікування даних", 17f, green, true).apply { gravity = Gravity.CENTER }
+        add(root, statusText)
         gap(root, 12)
         val first = row()
         val a = metric("↳", "Вхід", green); inputText = a.second
@@ -172,7 +181,7 @@ class MainActivity : Activity() {
         alertsButton.setOnClickListener { showAlerts() }
         val logout = text("Вийти з облікового запису", 12f, muted).apply { gravity = Gravity.CENTER }
         add(root, logout)
-        logout.setOnClickListener { session = null; showLogin() }
+        logout.setOnClickListener { session = null; prefs().edit().remove("saved_session").apply(); showLogin() }
         refresh.setOnClickListener { loadData() }
         setContentView(ScrollView(this).apply { isFillViewport = true; addView(root) })
         handler.removeCallbacks(tick); handler.postDelayed(tick, 5000L)
@@ -183,8 +192,12 @@ class MainActivity : Activity() {
         batteryText.text = t.battery?.let { "$it%" } ?: "—%"
         inputText.text = t.input; outputText.text = t.output
         tempText.text = t.temperature; timeText.text = t.remaining
+        val state = statusFor(t.inputWatts, t.outputWatts)
+        statusText.text = state.second
+        statusText.setTextColor(if (state.first == "outage") Color.rgb(255, 112, 112) else green)
         saveTelemetry(t)
         checkAlerts(t.battery)
+        checkPowerAlerts(state.first, t.battery)
         updatedText.text = "Оновлено " + SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
     }
     private fun loadData() {
@@ -252,7 +265,18 @@ class MainActivity : Activity() {
         add(root,back); back.setOnClickListener { showDashboard(session?.name ?: "P1000E Plus"); loadData() }
         gap(root,20)
         add(root,text("Мої сповіщення",27f,white,true)); gap(root,8)
-        add(root,text("Власні пороги заряду станції",14f,muted)); gap(root,20)
+        add(root,text("Пороги заряду та події станції",14f,muted)); gap(root,16)
+        fun systemToggle(title: String, key: String): LinearLayout {
+            val line = row().apply { background = shape(panel,16,Color.rgb(41,67,51)); setPadding(dp(12),dp(12),dp(10),dp(12)) }
+            line.addView(text(title,16f,white,true),LinearLayout.LayoutParams(0,-2,1f))
+            line.addView(Switch(this).apply {
+                isChecked = prefs().getBoolean(key,true)
+                setOnCheckedChangeListener { _, checked -> prefs().edit().putBoolean(key,checked).apply() }
+            })
+            return line
+        }
+        add(root,systemToggle("⚡ Почалось заряджання","alert_charging")); gap(root,10)
+        add(root,systemToggle("🔌 Зникла мережа","alert_outage")); gap(root,20)
         val items = column(); add(root,items)
         fun render() {
             items.removeAllViews()
@@ -295,12 +319,29 @@ class MainActivity : Activity() {
         }
         p.edit().putInt("previous_level",level).apply()
     }
-    private fun notifyAlert(title: String, level: Int) {
+    private fun statusFor(input: Double?, output: Double?): Pair<String,String> {
+        if (input == null || output == null) return "unknown" to "Немає даних"
+        if (input == 0.0 && output > 0.0) return "outage" to "Зникла мережа"
+        if (input > output) return "charging" to "Йде заряджання"
+        if (input == 0.0 && output == 0.0) return "idle" to "Очікування"
+        return "balance" to "Баланс потужності"
+    }
+    private fun checkPowerAlerts(state: String, level: Int?) {
+        if (state == "unknown") return
+        val p = prefs()
+        val previous = p.getString("previous_power_state",null)
+        if (previous != null && previous != state) {
+            if (state == "charging" && p.getBoolean("alert_charging",true)) notifyAlert("Почалось заряджання",level)
+            if (state == "outage" && p.getBoolean("alert_outage",true)) notifyAlert("Зникла мережа",level)
+        }
+        p.edit().putString("previous_power_state",state).apply()
+    }
+    private fun notifyAlert(title: String, level: Int?) {
         val nm=getSystemService(android.app.NotificationManager::class.java)
         val channel="charge_alerts"
         nm.createNotificationChannel(android.app.NotificationChannel(channel,"Сповіщення заряду",android.app.NotificationManager.IMPORTANCE_HIGH))
         val notification=android.app.Notification.Builder(this,channel).setSmallIcon(android.R.drawable.ic_dialog_info)
-            .setContentTitle(title).setContentText("Поточний заряд: $level%").setAutoCancel(true).build()
+            .setContentTitle(title).setContentText(level?.let { "Поточний заряд: $it%" } ?: "Стан станції змінився").setAutoCancel(true).build()
         nm.notify((System.currentTimeMillis()%Int.MAX_VALUE).toInt(),notification)
     }
     private fun saveTelemetry(t: Telemetry) {
@@ -310,11 +351,46 @@ class MainActivity : Activity() {
         MonitorWidget.updateAll(this)
     }
 
+    private fun secretKey(): javax.crypto.SecretKey {
+        val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        (store.getKey("oukitel_session_v1", null) as? javax.crypto.SecretKey)?.let { return it }
+        val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES,"AndroidKeyStore")
+        generator.init(KeyGenParameterSpec.Builder("oukitel_session_v1",KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
+            .setBlockModes(KeyProperties.BLOCK_MODE_GCM).setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE).build())
+        return generator.generateKey()
+    }
+    private fun saveSession(s: Session) {
+        try {
+            val raw = JSONObject().put("base",s.base).put("token",s.token).put("pk",s.pk).put("dk",s.dk).put("name",s.name).toString()
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(Cipher.ENCRYPT_MODE,secretKey())
+            val bytes = cipher.iv + cipher.doFinal(raw.toByteArray(Charsets.UTF_8))
+            prefs().edit().putString("saved_session",Base64.encodeToString(bytes,Base64.NO_WRAP)).apply()
+        } catch (_: Exception) { }
+    }
+    private fun restoreSession() {
+        val saved = prefs().getString("saved_session",null)
+        if (saved == null) { showLogin(); return }
+        Thread {
+            try {
+                val bytes = Base64.decode(saved,Base64.NO_WRAP)
+                val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+                cipher.init(Cipher.DECRYPT_MODE,secretKey(),GCMParameterSpec(128,bytes.copyOfRange(0,12)))
+                val j = JSONObject(String(cipher.doFinal(bytes.copyOfRange(12,bytes.size)),Charsets.UTF_8))
+                val s = Session(j.getString("base"),j.getString("token"),j.getString("pk"),j.getString("dk"),j.getString("name"))
+                val telemetry = readTelemetry(s)
+                runOnUiThread { session = s; showDashboard(s.name); applyTelemetry(telemetry) }
+            } catch (_: Exception) {
+                runOnUiThread { prefs().edit().remove("saved_session").apply(); showLogin() }
+            }
+        }.start()
+    }
+
     private fun sha256(value: String): String = MessageDigest.getInstance("SHA-256")
         .digest(value.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
 
     private data class Session(val base: String, val token: String, val pk: String, val dk: String, val name: String)
-    private data class Telemetry(val battery: Int?, val input: String, val output: String, val temperature: String, val remaining: String, val mains: String)
+    private data class Telemetry(val battery: Int?, val input: String, val output: String, val temperature: String, val remaining: String, val inputWatts: Double?, val outputWatts: Double?)
 
     private fun connect(email: String, password: String, region: String): Session {
         val config = when (region) {
@@ -368,9 +444,7 @@ class MainActivity : Activity() {
             "${remainingMinutes / 60} год ${remainingMinutes % 60} хв"
         } else "—"
         // AC input power > 0 confirms grid/AC input. Zero cannot prove a power outage.
-        val acInput = number(11)
-        val mains = if (acInput != null && acInput > 0) "Є живлення AC" else "Невідомо"
-        return Telemetry(number(1)?.toInt()?.coerceIn(0, 100), fmt(4, "Вт"), fmt(5, "Вт"), fmt(14, "°C"), remaining, mains)
+        return Telemetry(number(1)?.toInt()?.coerceIn(0, 100), fmt(4, "Вт"), fmt(5, "Вт"), fmt(14, "°C"), remaining, input, output)
     }
 
     private fun request(url: String, method: String, form: String?, token: String?): JSONObject {
