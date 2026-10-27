@@ -62,6 +62,53 @@ class MainActivity : Activity() {
     override fun onNewIntent(intent: android.content.Intent?) { super.onNewIntent(intent); if (active && intent?.getBooleanExtra("refresh_widget",false) == true) loadData() }
     override fun onDestroy() { handler.removeCallbacks(tick); super.onDestroy() }
 
+    // Gradient and softly glowing forest-green waves behind the glass cards.
+    // Drawn in Android Canvas: no external images, permissions or dependencies.
+    private inner class ForestBackground : android.graphics.drawable.Drawable() {
+        private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        override fun draw(canvas: Canvas) {
+            val w = bounds.width().toFloat()
+            val h = bounds.height().toFloat()
+            if (w <= 0f || h <= 0f) return
+            paint.style = Paint.Style.FILL
+            paint.shader = LinearGradient(
+                0f, 0f, w, h,
+                intArrayOf(Color.rgb(5, 17, 22), Color.rgb(8, 39, 36), Color.rgb(4, 17, 22)),
+                floatArrayOf(0f, 0.55f, 1f), Shader.TileMode.CLAMP
+            )
+            canvas.drawRect(0f, 0f, w, h, paint)
+            paint.shader = RadialGradient(
+                w * .82f, h * .39f, w * .85f,
+                intArrayOf(Color.argb(105, 20, 173, 105), Color.argb(28, 15, 107, 82), Color.TRANSPARENT),
+                floatArrayOf(0f, .45f, 1f), Shader.TileMode.CLAMP
+            )
+            canvas.drawRect(0f, 0f, w, h, paint)
+            paint.shader = RadialGradient(
+                w * .04f, h * .92f, w * .8f,
+                intArrayOf(Color.argb(85, 12, 132, 88), Color.TRANSPARENT),
+                null, Shader.TileMode.CLAMP
+            )
+            canvas.drawRect(0f, 0f, w, h, paint)
+            paint.shader = null
+            paint.style = Paint.Style.STROKE
+            for (i in 0..7) {
+                val offset = i * h * .027f
+                val path = Path().apply {
+                    moveTo(-w * .25f, h * .70f + offset)
+                    cubicTo(w * .22f, h * .52f + offset, w * .64f, h * .87f + offset, w * 1.24f, h * .62f + offset)
+                }
+                paint.color = Color.argb(26 - i * 2, 67, 247, 156)
+                paint.strokeWidth = resources.displayMetrics.density * (2.2f - i * .15f)
+                canvas.drawPath(path, paint)
+            }
+            paint.style = Paint.Style.FILL
+        }
+        override fun setAlpha(alpha: Int) {}
+        override fun setColorFilter(filter: android.graphics.ColorFilter?) {}
+        @Deprecated("Deprecated in Java")
+        override fun getOpacity(): Int = android.graphics.PixelFormat.OPAQUE
+    }
+
     private fun dp(v: Int) = (v * resources.displayMetrics.density + .5f).toInt()
     private fun shape(color: Int, radius: Int = 17, stroke: Int? = null): GradientDrawable = GradientDrawable().apply {
         colors = intArrayOf(Color.rgb(37, 105, 88), color, Color.rgb(5, 49, 30)); orientation = GradientDrawable.Orientation.TL_BR; cornerRadius = dp(radius).toFloat()
@@ -83,7 +130,7 @@ class MainActivity : Activity() {
 
     private fun showLogin() {
         active = false; handler.removeCallbacks(tick)
-        val root = column().apply { setPadding(dp(24), dp(36), dp(24), dp(24)); setBackgroundColor(bg); gravity = Gravity.CENTER_HORIZONTAL }
+        val root = column().apply { setPadding(dp(24), dp(36), dp(24), dp(24)); background = ForestBackground(); gravity = Gravity.CENTER_HORIZONTAL }
         gap(root, 40)
         add(root, text("ϟ", 80f, green, true).apply { gravity = Gravity.CENTER })
         gap(root, 8)
@@ -140,7 +187,7 @@ class MainActivity : Activity() {
     private fun showDashboard(name: String) {
         active = true
         MonitorService.start(this)
-        val root = column().apply { setBackgroundColor(bg); setPadding(dp(18), dp(22), dp(18), dp(24)) }
+        val root = column().apply { background = ForestBackground(); setPadding(dp(18), dp(22), dp(18), dp(24)) }
         val top = row()
         val heading = column()
         add(heading, text("OukitelMonitor", 21f, white, true))
@@ -273,7 +320,7 @@ class MainActivity : Activity() {
     }
     private fun showAlerts() {
         active = false; handler.removeCallbacks(tick)
-        val root = column().apply { setBackgroundColor(bg); setPadding(dp(20),dp(26),dp(20),dp(26)) }
+        val root = column().apply { background = ForestBackground(); setPadding(dp(20),dp(26),dp(20),dp(26)) }
         val back = text("‹   Назад",18f,green,true).apply { setPadding(0,dp(8),0,dp(8)) }
         add(root,back); back.setOnClickListener { showDashboard(session?.name ?: "P1000E Plus"); loadData() }
         gap(root,20)
