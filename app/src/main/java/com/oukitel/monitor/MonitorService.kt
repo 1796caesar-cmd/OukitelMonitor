@@ -42,7 +42,7 @@ class MonitorService : Service() {
         val notification = Notification.Builder(this, "monitor_active")
             .setSmallIcon(android.R.drawable.ic_lock_idle_charging)
             .setContentTitle("OukitelMonitor")
-            .setContentText("Моніторинг станції щохвилини")
+            .setContentText("Заряд станції: " + (if (prefs.getInt("previous_level", -1) >= 0) "${prefs.getInt("previous_level", -1)}%" else "—"))
             .setContentIntent(open)
             .setOngoing(true)
             .build()
@@ -99,6 +99,7 @@ class MonitorService : Service() {
                         }
                     }
                     prefs.edit().putInt("previous_level", battery).apply()
+                    updateChargeNotification(battery)
                 }
                 if (input != null && output != null) {
                     val state = when {
@@ -118,6 +119,19 @@ class MonitorService : Service() {
                 // Network errors must not be interpreted as a power outage.
             } finally { busy.set(false) }
         }.start()
+    }
+
+    private fun updateChargeNotification(level: Int) {
+        val open=PendingIntent.getActivity(this,0,Intent(this,MainActivity::class.java),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val notification=Notification.Builder(this,"monitor_active")
+            .setSmallIcon(android.R.drawable.ic_lock_idle_charging)
+            .setContentTitle("OukitelMonitor")
+            .setContentText("Заряд станції: $level%")
+            .setContentIntent(open)
+            .setOnlyAlertOnce(true)
+            .setOngoing(true)
+            .build()
+        getSystemService(NotificationManager::class.java).notify(101,notification)
     }
 
     private fun alert(title: String, level: Int?) {

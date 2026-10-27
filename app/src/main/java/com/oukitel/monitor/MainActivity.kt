@@ -32,11 +32,12 @@ import java.util.Date
 import java.util.Locale
 
 class MainActivity : Activity() {
-    private val bg = Color.rgb(5, 14, 17)
-    private val panel = Color.rgb(13, 49, 43)
-    private val green = Color.rgb(57, 250, 108)
-    private val white = Color.WHITE
-    private val muted = Color.rgb(183, 223, 202)
+    private val bg get() = if (lightTheme) Color.rgb(242, 250, 246) else Color.rgb(5, 14, 17)
+    private val panel get() = if (lightTheme) Color.rgb(225, 246, 234) else Color.rgb(13, 49, 43)
+    private val green get() = if (lightTheme) Color.rgb(13, 145, 71) else Color.rgb(57, 250, 108)
+    private val white get() = if (lightTheme) Color.rgb(17, 53, 40) else Color.WHITE
+    private val muted get() = if (lightTheme) Color.rgb(77, 120, 98) else Color.rgb(183, 223, 202)
+    private val lightTheme get() = getSharedPreferences("oukitel", MODE_PRIVATE).getBoolean("light_theme", false)
     private val handler = Handler(Looper.getMainLooper())
     private var session: Session? = null
     private var busy = false
@@ -56,62 +57,21 @@ class MainActivity : Activity() {
         }
     }
 
-    override fun onCreate(savedInstanceState: Bundle?) { super.onCreate(savedInstanceState); restoreSession(); if (android.os.Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 100) }
+    override fun onCreate(savedInstanceState: Bundle?) { super.onCreate(savedInstanceState); window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(bg)); window.statusBarColor=bg; window.navigationBarColor=bg; restoreSession(); if (android.os.Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 100) }
     override fun onPause() { super.onPause(); handler.removeCallbacks(tick) }
     override fun onResume() { super.onResume(); if (active) { handler.removeCallbacks(tick); loadData(); handler.postDelayed(tick, 5000L) } }
     override fun onNewIntent(intent: android.content.Intent?) { super.onNewIntent(intent); if (active && intent?.getBooleanExtra("refresh_widget",false) == true) loadData() }
     override fun onDestroy() { handler.removeCallbacks(tick); super.onDestroy() }
 
-    // Gradient and softly glowing forest-green waves behind the glass cards.
-    // Drawn in Android Canvas: no external images, permissions or dependencies.
-    private inner class ForestBackground : android.graphics.drawable.Drawable() {
-        private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-        override fun draw(canvas: Canvas) {
-            val w = bounds.width().toFloat()
-            val h = bounds.height().toFloat()
-            if (w <= 0f || h <= 0f) return
-            paint.style = Paint.Style.FILL
-            paint.shader = LinearGradient(
-                0f, 0f, w, h,
-                intArrayOf(Color.rgb(5, 17, 22), Color.rgb(8, 39, 36), Color.rgb(4, 17, 22)),
-                floatArrayOf(0f, 0.55f, 1f), Shader.TileMode.CLAMP
-            )
-            canvas.drawRect(0f, 0f, w, h, paint)
-            paint.shader = RadialGradient(
-                w * .82f, h * .39f, w * .85f,
-                intArrayOf(Color.argb(105, 20, 173, 105), Color.argb(28, 15, 107, 82), Color.TRANSPARENT),
-                floatArrayOf(0f, .45f, 1f), Shader.TileMode.CLAMP
-            )
-            canvas.drawRect(0f, 0f, w, h, paint)
-            paint.shader = RadialGradient(
-                w * .04f, h * .92f, w * .8f,
-                intArrayOf(Color.argb(85, 12, 132, 88), Color.TRANSPARENT),
-                null, Shader.TileMode.CLAMP
-            )
-            canvas.drawRect(0f, 0f, w, h, paint)
-            paint.shader = null
-            paint.style = Paint.Style.STROKE
-            for (i in 0..7) {
-                val offset = i * h * .027f
-                val path = Path().apply {
-                    moveTo(-w * .25f, h * .70f + offset)
-                    cubicTo(w * .22f, h * .52f + offset, w * .64f, h * .87f + offset, w * 1.24f, h * .62f + offset)
-                }
-                paint.color = Color.argb(26 - i * 2, 67, 247, 156)
-                paint.strokeWidth = resources.displayMetrics.density * (2.2f - i * .15f)
-                canvas.drawPath(path, paint)
-            }
-            paint.style = Paint.Style.FILL
-        }
-        override fun setAlpha(alpha: Int) {}
-        override fun setColorFilter(filter: android.graphics.ColorFilter?) {}
-        @Deprecated("Deprecated in Java")
-        override fun getOpacity(): Int = android.graphics.PixelFormat.OPAQUE
-    }
+    // Built-in gradient stays stable when the soft keyboard resizes the window.
+    private fun forestBackground(): GradientDrawable = GradientDrawable(
+        GradientDrawable.Orientation.TL_BR,
+        if (lightTheme) intArrayOf(Color.rgb(250,255,252),Color.rgb(222,248,234),Color.rgb(238,252,244),Color.rgb(249,255,251)) else intArrayOf(Color.rgb(5, 17, 22), Color.rgb(9, 65, 51),Color.rgb(7, 42, 38), Color.rgb(4, 17, 22))
+    )
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density + .5f).toInt()
     private fun shape(color: Int, radius: Int = 17, stroke: Int? = null): GradientDrawable = GradientDrawable().apply {
-        colors = intArrayOf(Color.rgb(37, 105, 88), color, Color.rgb(5, 49, 30)); orientation = GradientDrawable.Orientation.TL_BR; cornerRadius = dp(radius).toFloat()
+        colors = if (lightTheme) intArrayOf(Color.rgb(255,255,255), color, Color.rgb(200,235,214)) else intArrayOf(Color.rgb(37, 105, 88), color, Color.rgb(5, 49, 30)); orientation = GradientDrawable.Orientation.TL_BR; cornerRadius = dp(radius).toFloat()
         if (stroke != null) setStroke(dp(1), stroke)
     }
     private fun text(value: String, size: Float, color: Int = white, bold: Boolean = false): TextView = TextView(this).apply {
@@ -130,7 +90,7 @@ class MainActivity : Activity() {
 
     private fun showLogin() {
         active = false; handler.removeCallbacks(tick)
-        val root = column().apply { setPadding(dp(24), dp(36), dp(24), dp(24)); background = ForestBackground(); gravity = Gravity.CENTER_HORIZONTAL }
+        val root = column().apply { setPadding(dp(24), dp(36), dp(24), dp(24)); background = forestBackground(); gravity = Gravity.CENTER_HORIZONTAL }
         gap(root, 40)
         add(root, text("ϟ", 80f, green, true).apply { gravity = Gravity.CENTER })
         gap(root, 8)
@@ -173,7 +133,7 @@ class MainActivity : Activity() {
                 }
             }.start()
         }
-        setContentView(ScrollView(this).apply { isFillViewport = true; addView(root) })
+        setContentView(ScrollView(this).apply { background = forestBackground(); isFillViewport = true; addView(root) })
     }
 
     private fun metric(icon: String, label: String, color: Int): Pair<LinearLayout, TextView> {
@@ -187,14 +147,14 @@ class MainActivity : Activity() {
     private fun showDashboard(name: String) {
         active = true
         MonitorService.start(this)
-        val root = column().apply { background = ForestBackground(); setPadding(dp(18), dp(22), dp(18), dp(24)) }
+        val root = column().apply { background = forestBackground(); setPadding(dp(18), dp(22), dp(18), dp(24)) }
         val top = row()
         val heading = column()
         add(heading, text("OukitelMonitor", 21f, white, true))
         add(heading, text(name, 13f, muted))
         top.addView(heading, LinearLayout.LayoutParams(0, -2, 1f))
         val actions = row().apply { gravity = Gravity.RIGHT }
-        refresh = text("⟳", 28f, green, true).apply { gravity = Gravity.CENTER; background = shape(panel, 15, green); setPadding(dp(12), dp(7), dp(12), dp(7)); elevation=dp(5).toFloat() }
+        refresh = text("⟳  Оновити · —", 14f, green, true).apply { gravity = Gravity.CENTER; background = shape(panel, 18, green); setPadding(dp(12), dp(10), dp(12), dp(10)); elevation=dp(5).toFloat() }
         actions.addView(refresh)
         val exit = text("⇥", 27f, green, true).apply { gravity = Gravity.CENTER; background = shape(panel, 15, green); setPadding(dp(12), dp(7), dp(12), dp(7)); elevation=dp(5).toFloat() }
         actions.addView(exit, LinearLayout.LayoutParams(-2,-2).apply { leftMargin=dp(9) })
@@ -202,7 +162,7 @@ class MainActivity : Activity() {
         updatedText = text("", 10f, muted)
         top.addView(actions)
         add(root, top)
-        add(root, updatedText.apply { gravity=Gravity.RIGHT })
+        // Time is displayed inside the refresh capsule.
         gap(root, 12)
         batteryView = BatteryView()
         root.addView(batteryView, LinearLayout.LayoutParams(-1, dp(295)))
@@ -222,18 +182,40 @@ class MainActivity : Activity() {
         second.addView(c.first, LinearLayout.LayoutParams(0, -2, 1f).apply { rightMargin = dp(5) })
         second.addView(d.first, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(5) })
         add(root, second); gap(root, 10)
-        val alertsButton = text("🔔   Створити сповіщення     ›", 17f, white, true).apply {
+        val alertsButton = text("🔔   Сповіщення     ›", 17f, white, true).apply {
             gravity = Gravity.CENTER_VERTICAL
             background = shape(Color.rgb(22, 59, 38), 20, Color.rgb(49, 116, 70))
             elevation = dp(8).toFloat()
             setPadding(dp(18), dp(20), dp(18), dp(20))
         }
         add(root, alertsButton); gap(root, 14)
+        add(root, text("⚙   Налаштування     ›", 17f, white, true).apply { background=shape(panel,20,green); setPadding(dp(18),dp(18),dp(18),dp(18)); setOnClickListener { showSettings() } }); gap(root, 12)
         alertsButton.setOnClickListener { showAlerts() }
         
         refresh.setOnClickListener { loadData() }
-        setContentView(ScrollView(this).apply { isFillViewport = true; addView(root) })
+        setContentView(ScrollView(this).apply { background = forestBackground(); isFillViewport = true; addView(root) })
         handler.removeCallbacks(tick); handler.postDelayed(tick, 5000L)
+    }
+
+    private fun showSettings() {
+        active = false; handler.removeCallbacks(tick)
+        val root = column().apply { background=forestBackground(); setPadding(dp(20),dp(28),dp(20),dp(24)) }
+        val back=text("‹   Головна",18f,green,true).apply { setPadding(0,dp(8),0,dp(8)) }
+        add(root,back); back.setOnClickListener { showDashboard(session?.name ?: "P1000E Plus"); loadData() }
+        gap(root,24); add(root,text("Налаштування",29f,white,true)); gap(root,20)
+        add(root,text("Тема оформлення",18f,white,true)); gap(root,12)
+        val theme = android.widget.RadioGroup(this).apply { orientation=android.widget.RadioGroup.VERTICAL; background=shape(panel,18,green); setPadding(dp(16),dp(10),dp(16),dp(10)) }
+        val dark=android.widget.RadioButton(this).apply { text="Темна"; setTextColor(white); id=View.generateViewId() }
+        val light=android.widget.RadioButton(this).apply { text="Світла"; setTextColor(white); id=View.generateViewId() }
+        theme.addView(dark); theme.addView(light); theme.check(if(lightTheme) light.id else dark.id)
+        theme.setOnCheckedChangeListener { _,id ->
+            val chosen=id==light.id
+            if (chosen != lightTheme) { prefs().edit().putBoolean("light_theme",chosen).apply(); window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(bg)); window.statusBarColor=bg; window.navigationBarColor=bg; showSettings() }
+        }
+        add(root,theme); gap(root,26)
+        val logout=text("⇥   Вийти з облікового запису",17f,white,true).apply { background=shape(panel,18,green); setPadding(dp(18),dp(18),dp(18),dp(18)); setOnClickListener { confirmLogout() } }
+        add(root,logout)
+        setContentView(ScrollView(this).apply { background=forestBackground(); isFillViewport=true; addView(root) })
     }
 
     private fun confirmLogout() {
@@ -258,18 +240,20 @@ class MainActivity : Activity() {
         saveTelemetry(t)
         checkAlerts(t.battery)
         checkPowerAlerts(state.first, t.battery)
-        updatedText.text = "Оновлено " + SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
+        val at = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
+        updatedText.text = "Оновлено $at"
+        refresh.text = "⟳  $at"
     }
     private fun loadData() {
         val s = session ?: return
         if (busy || !active) return
-        busy = true; refresh.text = "◌"
+        busy = true; refresh.text = "◌  Оновлення"
         Thread {
             try {
                 val t = readTelemetry(s)
-                runOnUiThread { if (active) applyTelemetry(t); busy = false; if (active) refresh.text = "⟳" }
+                runOnUiThread { if (active) applyTelemetry(t); busy = false; if (active) refresh.text = "⟳  " + (updatedText.text.toString().removePrefix("Оновлено ").ifBlank { "—" }) }
             } catch (ex: Exception) {
-                runOnUiThread { busy = false; if (active) { refresh.text = "⟳"; Toast.makeText(this, "Не вдалося оновити: ${ex.message}", Toast.LENGTH_LONG).show() } }
+                runOnUiThread { busy = false; if (active) { refresh.text = "⟳  " + (updatedText.text.toString().removePrefix("Оновлено ").ifBlank { "—" }); Toast.makeText(this, "Не вдалося оновити: ${ex.message}", Toast.LENGTH_LONG).show() } }
             }
         }.start()
     }
@@ -282,7 +266,7 @@ class MainActivity : Activity() {
             setWillNotDraw(false)
             val center = column().apply { gravity = Gravity.CENTER }
             add(center, percent)
-            add(center, text("Заряд батареї", 16f, Color.rgb(210, 240, 220)).apply { gravity = Gravity.CENTER })
+            add(center, text("Заряд батареї", 16f, muted).apply { gravity = Gravity.CENTER })
             addView(center, android.widget.FrameLayout.LayoutParams(dp(210), dp(100), Gravity.CENTER))
         }
         override fun onDraw(canvas: Canvas) {
@@ -320,7 +304,7 @@ class MainActivity : Activity() {
     }
     private fun showAlerts() {
         active = false; handler.removeCallbacks(tick)
-        val root = column().apply { background = ForestBackground(); setPadding(dp(20),dp(26),dp(20),dp(26)) }
+        val root = column().apply { background = forestBackground(); setPadding(dp(20),dp(26),dp(20),dp(26)) }
         val back = text("‹   Назад",18f,green,true).apply { setPadding(0,dp(8),0,dp(8)) }
         add(root,back); back.setOnClickListener { showDashboard(session?.name ?: "P1000E Plus"); loadData() }
         gap(root,20)
@@ -368,7 +352,7 @@ class MainActivity : Activity() {
             rules.add(AlertRule(System.currentTimeMillis(),kind,threshold,true)); saveRules(rules)
             number.text.clear(); render()
         }
-        setContentView(ScrollView(this).apply { isFillViewport=true; addView(root) })
+        setContentView(ScrollView(this).apply { background = forestBackground(); isFillViewport=true; addView(root) })
     }
     private fun checkAlerts(level: Int?) {
         if(level==null) return
