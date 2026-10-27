@@ -119,7 +119,7 @@ class MainActivity : Activity() {
                 }
             }.start()
         }
-        setContentView(ScrollView(this).apply { fillViewport = true; addView(root) })
+        setContentView(ScrollView(this).apply { isFillViewport = true; addView(root) })
     }
 
     private fun metric(icon: String, label: String, color: Int): Pair<LinearLayout, TextView> {
@@ -171,7 +171,7 @@ class MainActivity : Activity() {
         add(root, logout)
         logout.setOnClickListener { session = null; showLogin() }
         refresh.setOnClickListener { loadData() }
-        setContentView(ScrollView(this).apply { fillViewport = true; addView(root) })
+        setContentView(ScrollView(this).apply { isFillViewport = true; addView(root) })
         handler.removeCallbacks(tick); handler.postDelayed(tick, 30000L)
     }
 
