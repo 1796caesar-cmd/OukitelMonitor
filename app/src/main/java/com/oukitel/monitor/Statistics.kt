@@ -5,6 +5,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.view.View
+import android.view.MotionEvent
 import org.json.JSONArray
 import org.json.JSONObject
 import java.text.SimpleDateFormat
@@ -52,9 +53,23 @@ object StatisticsStore {
 
 class StatisticsChart(context: Context, private val power: Boolean, private val light: Boolean) : View(context) {
     private var entries: List<StatisticsStore.Sample> = emptyList()
+    private var selectedIndex = -1
+    var onSampleSelected: ((StatisticsStore.Sample) -> Unit)? = null
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val density = resources.displayMetrics.density
-    fun setEntries(data: List<StatisticsStore.Sample>) { entries = data; invalidate() }
+    fun setEntries(data: List<StatisticsStore.Sample>) { entries = data.sortedBy { it.timestamp }; selectedIndex = -1; invalidate() }
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (event.action != MotionEvent.ACTION_UP) return true
+        if (entries.isEmpty()) return true
+        val left = 45f * density; val right = width - 12f * density
+        val start = entries.first().timestamp
+        val end = maxOf(start + 1L, entries.last().timestamp)
+        val selectedTime = start + (((event.x - left) / (right - left)).coerceIn(0f, 1f) * (end - start)).toLong()
+        selectedIndex = entries.indices.minByOrNull { kotlin.math.abs(entries[it].timestamp - selectedTime) } ?: -1
+        if (selectedIndex >= 0) onSampleSelected?.invoke(entries[selectedIndex])
+        performClick(); invalidate(); return true
+    }
+    override fun performClick(): Boolean { super.performClick(); return true }
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         val w = width.toFloat(); val h = height.toFloat()
@@ -93,6 +108,28 @@ class StatisticsChart(context: Context, private val power: Boolean, private val 
             drawSeries(Color.rgb(66,160,242)){it.input}
             drawSeries(Color.rgb(248,166,70)){it.output}
         } else drawSeries(Color.rgb(43,203,101)){it.battery?.toDouble()}
+        // Actual recorded samples are visible as dots, never interpolated readings.
+        fun dots(color: Int, value: (StatisticsStore.Sample) -> Double?) {
+            paint.style = Paint.Style.FILL
+            for ((index,e) in entries.withIndex()) {
+                val v = value(e) ?: continue
+                val xx = x(e.timestamp)
+                val yy = bottom - (bottom-top)*(v/max).coerceIn(0.0,1.0).toFloat()
+                paint.color = color
+                canvas.drawCircle(xx,yy,(if (index == selectedIndex) 6f else 3.4f)*density,paint)
+                if (index == selectedIndex) {
+                    paint.color = ink
+                    paint.style = Paint.Style.STROKE
+                    paint.strokeWidth = 1.5f*density
+                    canvas.drawCircle(xx,yy,8f*density,paint)
+                    paint.style = Paint.Style.FILL
+                }
+            }
+        }
+        if (power) {
+            dots(Color.rgb(66,160,242)){it.input}
+            dots(Color.rgb(248,166,70)){it.output}
+        } else dots(Color.rgb(43,203,101)){it.battery?.toDouble()}
         val date=SimpleDateFormat("dd.MM HH:mm",Locale.getDefault())
         paint.color=ink; paint.textSize=10f*density
         canvas.drawText(date.format(Date(start)),left,bottom+19f*density,paint)

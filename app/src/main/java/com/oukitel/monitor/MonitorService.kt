@@ -131,18 +131,7 @@ class MonitorService : Service() {
                     updateChargeNotification(battery)
                 }
                 if (input != null && output != null) {
-                    val state = when {
-                        input == 0.0 && output > 0.0 -> "outage"
-                        input > output -> "charging"
-                        input == 0.0 && output == 0.0 -> "idle"
-                        else -> "balance"
-                    }
-                    val previous = prefs.getString("previous_power_state", null)
-                    if (previous != null && previous != state) {
-                        if (state == "outage" && prefs.getBoolean("alert_outage", true)) alert("Зникла мережа", battery)
-                        if (state == "charging" && prefs.getBoolean("alert_charging", true)) alert("Почалось заряджання", battery)
-                    }
-                    prefs.edit().putString("previous_power_state", state).apply()
+                    PowerMode.update(this, input, output, battery)
                 }
             } catch (_: Exception) {
                 // Network errors must not be interpreted as a power outage.

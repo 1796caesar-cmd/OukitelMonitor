@@ -184,13 +184,14 @@ class MainActivity : Activity() {
         batteryView = BatteryView()
         root.addView(batteryView, LinearLayout.LayoutParams(-1, dp(295)))
         batteryText = batteryView.percent
-        statusText = text("Очікування даних", 19f, green, true).apply { gravity = Gravity.CENTER; background = shape(if (lightTheme) panel else Color.rgb(9, 71, 40), 25, green); setPadding(dp(15),dp(11),dp(15),dp(11)); elevation=dp(6).toFloat() }
+        statusText = text("Режим роботи: Невідомо", 19f, green, true).apply { gravity = Gravity.CENTER; background = shape(if (lightTheme) panel else Color.rgb(9, 71, 40), 25, green); setPadding(dp(15),dp(11),dp(15),dp(11)); elevation=dp(6).toFloat() }
         add(root, statusText)
         gap(root, 12)
         val first = row()
         val a = metric("↳", "Вхід", green); inputText = a.second
-        outputText = text("", 12f)
+        val b = metric("↗", "Вихід", Color.rgb(255, 180, 72)); outputText = b.second
         first.addView(a.first, LinearLayout.LayoutParams(0, -2, 1f).apply { rightMargin = dp(5) })
+        first.addView(b.first, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(5) })
 
         add(root, first); gap(root, 10)
         val second = row()
@@ -314,9 +315,9 @@ class MainActivity : Activity() {
         batteryText.text = t.battery?.let { "$it%" } ?: "—%"
         inputText.text = t.input; outputText.text = t.output
         tempText.text = t.temperature; timeText.text = t.remaining
-        val state = statusFor(t.inputWatts, t.outputWatts)
+        val state = PowerMode.update(this, t.inputWatts, t.outputWatts, t.battery)
         statusText.text = state.second
-        statusText.setTextColor(if (state.first == "outage") Color.rgb(255, 112, 112) else green)
+        statusText.setTextColor(if (state.first == "battery") Color.rgb(255, 112, 112) else green)
         saveTelemetry(t)
         StatisticsStore.record(this, t.battery, t.inputWatts, t.outputWatts)
         checkAlerts(t.battery)
@@ -445,22 +446,9 @@ class MainActivity : Activity() {
         }
         p.edit().putInt("previous_level",level).apply()
     }
-    private fun statusFor(input: Double?, output: Double?): Pair<String,String> {
-        if (input == null || output == null) return "unknown" to "Немає даних"
-        if (input == 0.0 && output > 0.0) return "outage" to "Зникла мережа"
-        if (input > output) return "charging" to "Йде заряджання"
-        if (input == 0.0 && output == 0.0) return "idle" to "Очікування"
-        return "balance" to "Баланс потужності"
-    }
     private fun checkPowerAlerts(state: String, level: Int?) {
-        if (state == "unknown") return
-        val p = prefs()
-        val previous = p.getString("previous_power_state",null)
-        if (previous != null && previous != state) {
-            if (state == "charging" && p.getBoolean("alert_charging",true)) notifyAlert("Почалось заряджання",level)
-            if (state == "outage" && p.getBoolean("alert_outage",true)) notifyAlert("Зникла мережа",level)
-        }
-        p.edit().putString("previous_power_state",state).apply()
+        // PowerMode.update() is the single owner of state changes and notifications.
+        // The background service uses the same logic, avoiding duplicate alerts.
     }
     private fun notifyAlert(title: String, level: Int?) {
         val nm=getSystemService(android.app.NotificationManager::class.java)
@@ -587,6 +575,10 @@ class MainActivity : Activity() {
         val picker = Spinner(this)
         picker.adapter = ArrayAdapter(this,android.R.layout.simple_spinner_dropdown_item,periods)
         add(root,picker); gap(root,14)
+        val detail = text("Натисни на точку графіка, щоб переглянути запис", 14f, white).apply {
+            background = shape(panel, 15, green)
+            setPadding(dp(12),dp(14),dp(12),dp(14))
+        }
         val batteryTitle = text("Заряд акумулятора, %",18f,white,true)
         add(root,batteryTitle); gap(root,8)
         val batteryChart = StatisticsChart(this, false, lightTheme)
@@ -596,6 +588,16 @@ class MainActivity : Activity() {
         add(root,powerChart,height=dp(230)); gap(root,12)
         add(root,text("● Вхідна потужність     ● Вихідна потужність",13f,muted))
         gap(root,12)
+        add(root, detail); gap(root,12)
+        val showSample: (StatisticsStore.Sample) -> Unit = { sample ->
+            val stamp = SimpleDateFormat("dd.MM.yyyy HH:mm",Locale.getDefault()).format(Date(sample.timestamp))
+            val battery = sample.battery?.let { "$it%" } ?: "—"
+            val input = sample.input?.let { "${it.toInt()} Вт" } ?: "—"
+            val output = sample.output?.let { "${it.toInt()} Вт" } ?: "—"
+            detail.text = "Запис: $stamp\nЗаряд: $battery   •   Вхід: $input   •   Вихід: $output"
+        }
+        batteryChart.onSampleSelected = showSample
+        powerChart.onSampleSelected = showSample
         add(root,text("Дані записуються приблизно кожні 15 хвилин, коли працює фонова служба. Пропущені вимірювання не домальовуються.",13f,muted))
         picker.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
             override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
@@ -603,6 +605,7 @@ class MainActivity : Activity() {
                 val hours = when(position) { 0 -> 24; 1 -> 168; else -> 720 }
                 val entries = StatisticsStore.read(this@MainActivity, hours)
                 batteryChart.setEntries(entries); powerChart.setEntries(entries)
+                detail.text = "Натисни на точку графіка, щоб переглянути запис"
             }
         }
         val entries = StatisticsStore.read(this,24)
