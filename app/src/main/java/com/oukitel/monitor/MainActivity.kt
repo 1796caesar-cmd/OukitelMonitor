@@ -33,10 +33,10 @@ import java.util.Locale
 
 class MainActivity : Activity() {
     private val bg = Color.rgb(5, 14, 17)
-    private val panel = Color.rgb(17, 29, 33)
-    private val green = Color.rgb(48, 242, 106)
+    private val panel = Color.rgb(13, 49, 43)
+    private val green = Color.rgb(57, 250, 108)
     private val white = Color.WHITE
-    private val muted = Color.rgb(145, 163, 171)
+    private val muted = Color.rgb(183, 223, 202)
     private val handler = Handler(Looper.getMainLooper())
     private var session: Session? = null
     private var busy = false
@@ -64,7 +64,7 @@ class MainActivity : Activity() {
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density + .5f).toInt()
     private fun shape(color: Int, radius: Int = 17, stroke: Int? = null): GradientDrawable = GradientDrawable().apply {
-        setColor(color); cornerRadius = dp(radius).toFloat()
+        colors = intArrayOf(Color.rgb(37, 105, 88), color, Color.rgb(5, 49, 30)); orientation = GradientDrawable.Orientation.TL_BR; cornerRadius = dp(radius).toFloat()
         if (stroke != null) setStroke(dp(1), stroke)
     }
     private fun text(value: String, size: Float, color: Int = white, bold: Boolean = false): TextView = TextView(this).apply {
@@ -85,16 +85,16 @@ class MainActivity : Activity() {
         active = false; handler.removeCallbacks(tick)
         val root = column().apply { setPadding(dp(24), dp(36), dp(24), dp(24)); setBackgroundColor(bg); gravity = Gravity.CENTER_HORIZONTAL }
         gap(root, 40)
-        add(root, text("ϟ", 66f, green, true).apply { gravity = Gravity.CENTER })
+        add(root, text("ϟ", 80f, green, true).apply { gravity = Gravity.CENTER })
         gap(root, 8)
-        add(root, text("Вхід у Wonderfree", 29f, white, true).apply { gravity = Gravity.CENTER })
-        add(root, text("Моніторинг зарядної станції", 15f, muted).apply { gravity = Gravity.CENTER })
+        add(root, text("OukitelMonitor", 30f, white, true).apply { gravity = Gravity.CENTER })
+        add(root, text("Моніторинг зарядної станції Oukitel", 16f, muted).apply { gravity = Gravity.CENTER })
         gap(root, 32)
         fun field(hint: String, password: Boolean): EditText = EditText(this).apply {
             this.hint = hint; setSingleLine(true); textSize = 16f
             setTextColor(white); setHintTextColor(muted)
             inputType = if (password) InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD else InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS
-            background = shape(panel, 14, Color.rgb(35, 55, 57))
+            background = shape(panel, 18, Color.rgb(116, 222, 179)); elevation = dp(5).toFloat()
             setPadding(dp(17), dp(15), dp(17), dp(15))
         }
         val email = field("Електронна пошта Wonderfree", false)
@@ -105,7 +105,7 @@ class MainActivity : Activity() {
         add(root, text("Регіон хмари", 13f, muted)); add(root, region)
         gap(root, 22)
         val button = text("Увійти  →", 18f, Color.BLACK, true).apply {
-            gravity = Gravity.CENTER; background = shape(green, 15); setPadding(0, dp(16), 0, dp(16))
+            gravity = Gravity.CENTER; background = shape(Color.rgb(8, 127, 59), 18, green); elevation = dp(9).toFloat(); setPadding(0, dp(16), 0, dp(16))
         }
         add(root, button)
         gap(root, 16)
@@ -130,33 +130,37 @@ class MainActivity : Activity() {
     }
 
     private fun metric(icon: String, label: String, color: Int): Pair<LinearLayout, TextView> {
-        val tile = column().apply { background = shape(panel); setPadding(dp(14), dp(15), dp(10), dp(15)); elevation=dp(5).toFloat() }
-        add(tile, text("$icon   $label", 13f, muted))
-        val value = text("—", 20f, white, true)
+        val tile = column().apply { background = shape(panel, 23, Color.rgb(110, 215, 193)); setPadding(dp(15), dp(19), dp(12), dp(19)); elevation=dp(9).toFloat() }
+        add(tile, text("$icon  $label", 16f, white, true))
+        val value = text("—", 29f, white, true)
         add(tile, value)
         return Pair(tile, value)
     }
 
     private fun showDashboard(name: String) {
         active = true
+        MonitorService.start(this)
         val root = column().apply { setBackgroundColor(bg); setPadding(dp(18), dp(22), dp(18), dp(24)) }
         val top = row()
         val heading = column()
-        add(heading, text("Моніторинг станції", 22f, white, true))
+        add(heading, text("OukitelMonitor", 21f, white, true))
         add(heading, text(name, 13f, muted))
         top.addView(heading, LinearLayout.LayoutParams(0, -2, 1f))
-        val actions = column().apply { gravity = Gravity.RIGHT }
-        refresh = text("⟳", 30f, green, true).apply { gravity = Gravity.CENTER; setPadding(dp(10), 0, dp(10), 0) }
+        val actions = row().apply { gravity = Gravity.RIGHT }
+        refresh = text("⟳", 28f, green, true).apply { gravity = Gravity.CENTER; background = shape(panel, 15, green); setPadding(dp(12), dp(7), dp(12), dp(7)); elevation=dp(5).toFloat() }
         actions.addView(refresh)
-        updatedText = text("Ще не оновлено", 10f, muted).apply { gravity = Gravity.RIGHT }
-        actions.addView(updatedText)
+        val exit = text("⇥", 27f, green, true).apply { gravity = Gravity.CENTER; background = shape(panel, 15, green); setPadding(dp(12), dp(7), dp(12), dp(7)); elevation=dp(5).toFloat() }
+        actions.addView(exit, LinearLayout.LayoutParams(-2,-2).apply { leftMargin=dp(9) })
+        exit.setOnClickListener { confirmLogout() }
+        updatedText = text("", 10f, muted)
         top.addView(actions)
         add(root, top)
+        add(root, updatedText.apply { gravity=Gravity.RIGHT })
         gap(root, 12)
         batteryView = BatteryView()
         root.addView(batteryView, LinearLayout.LayoutParams(-1, dp(295)))
         batteryText = batteryView.percent
-        statusText = text("Очікування даних", 17f, green, true).apply { gravity = Gravity.CENTER }
+        statusText = text("Очікування даних", 19f, green, true).apply { gravity = Gravity.CENTER; background = shape(Color.rgb(9, 71, 40), 25, green); setPadding(dp(15),dp(11),dp(15),dp(11)); elevation=dp(6).toFloat() }
         add(root, statusText)
         gap(root, 12)
         val first = row()
@@ -179,12 +183,21 @@ class MainActivity : Activity() {
         }
         add(root, alertsButton); gap(root, 14)
         alertsButton.setOnClickListener { showAlerts() }
-        val logout = text("Вийти з облікового запису", 12f, muted).apply { gravity = Gravity.CENTER }
-        add(root, logout)
-        logout.setOnClickListener { session = null; prefs().edit().remove("saved_session").apply(); showLogin() }
+        
         refresh.setOnClickListener { loadData() }
         setContentView(ScrollView(this).apply { isFillViewport = true; addView(root) })
         handler.removeCallbacks(tick); handler.postDelayed(tick, 5000L)
+    }
+
+    private fun confirmLogout() {
+        android.app.AlertDialog.Builder(this).setTitle("Вийти з облікового запису?")
+            .setMessage("Для повторного входу знадобляться email і пароль Wonderfree.")
+            .setNegativeButton("Скасувати", null)
+            .setPositiveButton("Вийти") { _, _ ->
+                stopService(android.content.Intent(this, MonitorService::class.java))
+                session = null; prefs().edit().remove("saved_session").remove("previous_power_state").remove("previous_level").apply()
+                showLogin()
+            }.show()
     }
 
     private fun applyTelemetry(t: Telemetry) {
@@ -217,12 +230,12 @@ class MainActivity : Activity() {
     private inner class BatteryView : android.widget.FrameLayout(this) {
         var level: Int = 0
             set(value) { field = value; invalidate() }
-        val percent = text("—%", 54f, white, true).apply { gravity = Gravity.CENTER }
+        val percent = text("—%", 65f, white, true).apply { gravity = Gravity.CENTER }
         init {
             setWillNotDraw(false)
             val center = column().apply { gravity = Gravity.CENTER }
             add(center, percent)
-            add(center, text("Рівень заряду", 13f, Color.rgb(210, 240, 220)).apply { gravity = Gravity.CENTER })
+            add(center, text("Заряд батареї", 16f, Color.rgb(210, 240, 220)).apply { gravity = Gravity.CENTER })
             addView(center, android.widget.FrameLayout.LayoutParams(dp(210), dp(100), Gravity.CENTER))
         }
         override fun onDraw(canvas: Canvas) {
@@ -264,10 +277,10 @@ class MainActivity : Activity() {
         val back = text("‹   Назад",18f,green,true).apply { setPadding(0,dp(8),0,dp(8)) }
         add(root,back); back.setOnClickListener { showDashboard(session?.name ?: "P1000E Plus"); loadData() }
         gap(root,20)
-        add(root,text("Мої сповіщення",27f,white,true)); gap(root,8)
+        add(root,text("Сповіщення",29f,white,true)); gap(root,8)
         add(root,text("Пороги заряду та події станції",14f,muted)); gap(root,16)
         fun systemToggle(title: String, key: String): LinearLayout {
-            val line = row().apply { background = shape(panel,16,Color.rgb(41,67,51)); setPadding(dp(12),dp(12),dp(10),dp(12)) }
+            val line = row().apply { background = shape(panel,20,Color.rgb(108,220,168)); elevation=dp(7).toFloat(); setPadding(dp(12),dp(12),dp(10),dp(12)) }
             line.addView(text(title,16f,white,true),LinearLayout.LayoutParams(0,-2,1f))
             line.addView(Switch(this).apply {
                 isChecked = prefs().getBoolean(key,true)
@@ -281,7 +294,7 @@ class MainActivity : Activity() {
         fun render() {
             items.removeAllViews()
             getRules().forEach { rule ->
-                val row = row().apply { background=shape(panel,16,Color.rgb(41,67,51)); setPadding(dp(12),dp(10),dp(8),dp(10)); elevation=dp(3).toFloat() }
+                val row = row().apply { background=shape(panel,20,Color.rgb(108,220,168)); setPadding(dp(12),dp(10),dp(8),dp(10)); elevation=dp(3).toFloat() }
                 val title = if(rule.kind=="below") "Заряд менше ${rule.threshold}%" else "Заряд досяг ${rule.threshold}%"
                 row.addView(text(title,16f,white,true),LinearLayout.LayoutParams(0,-2,1f))
                 val toggle = Switch(this).apply { isChecked=rule.enabled; setOnCheckedChangeListener { _,on -> saveRules(getRules().map { if(it.id==rule.id) it.copy(enabled=on) else it }) } }
