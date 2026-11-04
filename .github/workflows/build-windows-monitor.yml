@@ -1,0 +1,51 @@
+name: Build Oukitel Monitor Windows
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'windows_monitor/**'
+      - '.github/workflows/build-windows-monitor.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-exe:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        architecture: [x64, x86]
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+      - name: Python 3.11 for Windows (${{ matrix.architecture }})
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          architecture: ${{ matrix.architecture }}
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r windows_monitor/requirements.txt 'pyinstaller>=6.11,<7'
+      - name: Verify Python sources
+        shell: pwsh
+        run: |
+          python -m compileall -q windows_monitor
+          python -c "from Crypto.Cipher import AES; from PIL import Image; import pystray; import requests; print('Python dependencies OK')"
+      - name: Run offline smoke tests
+        shell: pwsh
+        run: python -m unittest discover -s windows_monitor/tests -v
+      - name: Build standalone EXE
+        shell: pwsh
+        run: |
+          python -m PyInstaller --noconfirm --clean --onefile --windowed --name OukitelMonitor-Windows-${{ matrix.architecture }} --paths windows_monitor --hidden-import pystray._win32 windows_monitor/app.py
+      - name: Upload executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: OukitelMonitor-Windows-${{ matrix.architecture }}
+          path: dist/OukitelMonitor-Windows-${{ matrix.architecture }}.exe
+          if-no-files-found: error

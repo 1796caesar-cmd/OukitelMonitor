@@ -1,0 +1,4 @@
+requests>=2.31,<3
+pystray==0.19.5
+Pillow>=10.4,<12
+pycryptodome>=3.20,<4
