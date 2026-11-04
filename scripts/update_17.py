@@ -37,7 +37,7 @@ main = replace_once(
 main = replace_once(
     main,
     '        val state = PowerMode.update(this, t.inputWatts, t.outputWatts, t.battery)',
-    '        PowerMode.update(this, t.inputWatts, t.outputWatts, t.battery)',
+    '        val state = PowerMode.update(this, t.inputWatts, t.outputWatts, t.battery)',
     'preserve PowerMode alerts',
 )
 
