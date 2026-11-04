@@ -22,6 +22,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from cloud import AuthError, Device, Telemetry, WonderfreeClient, WonderfreeError
 from security import delete_credentials, load_credentials, save_credentials
+from alert_rules import load_threshold_rules, multi_notification_messages
 
 try:
     import winreg
@@ -29,7 +30,7 @@ except ImportError:
     winreg = None
 
 APP_NAME = "Oukitel Monitor"
-APP_VERSION = "1.0 Windows"
+APP_VERSION = "1.2 Windows"
 AUTOSTART_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 AUTOSTART_NAME = "OukitelMonitorWindows"
 DATA_DIR = Path(os.getenv("LOCALAPPDATA") or str(Path.home())) / "OukitelMonitorWindows"
@@ -118,23 +119,7 @@ def history_read(hours: int) -> list[tuple[int, int]]:
     return rows
 
 
-def tray_image(level: int | None, stale: bool = False) -> Image.Image:
-    """The large source is scaled to a small system-tray icon by Windows."""
-    size = 64
-    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
-    shade = "#697E77" if stale or level is None else ("#E85B5B" if level <= 15 else "#DFAB30" if level <= 30 else "#17A957")
-    draw.rounded_rectangle((2, 6, 61, 57), radius=12, fill=shade, outline="#D4FFE8", width=2)
-    label = "--" if level is None else str(level)
-    try:
-        font = ImageFont.truetype(r"C:\Windows\Fonts\arialbd.ttf", 35 if len(label) <= 2 else 27)
-    except OSError:
-        font = ImageFont.load_default()
-    bounds = draw.textbbox((0, 0), label, font=font)
-    w, h = bounds[2] - bounds[0], bounds[3] - bounds[1]
-    draw.text(((size - w) / 2 - bounds[0], (size - h) / 2 - bounds[1] - 1), label,
-              fill="#FFFFFF", font=font)
-    return img
+from tray_style import tray_image
 
 
 class MonitorApp:
@@ -152,7 +137,7 @@ class MonitorApp:
         self.devices: list[Device] = []
         self.connected = False
         self.current_interval = int(self.settings.get("interval", 60))
-        if self.current_interval not in (30, 60, 180, 300, 600):
+        if self.current_interval not in (30, 60, 180, 300, 600, 900, 1800, 3600):
             self.current_interval = 60
         self.root.title("Oukitel Monitor — Windows")
         self.root.geometry("520x680")
@@ -359,27 +344,102 @@ class MonitorApp:
         w = tk.Toplevel(self.root)
         self.settings_window = w
         w.title("Налаштування — Oukitel Monitor")
-        w.geometry("410x360")
+        w.geometry("510x665")
+        w.minsize(455, 490)
         w.configure(bg=BG)
-        inner = self._frame(w, BG)
-        inner.pack(fill="both", expand=True, padx=22, pady=20)
-        self._text(inner, "Налаштування", 19, GREEN, True, BG).pack(anchor="w", pady=(0, 16))
+
+        # Scrolling settings permit any reasonable number of custom thresholds.
+        footer = self._frame(w, BG)
+        footer.pack(side="bottom", fill="x", padx=20, pady=(5, 14))
+        scrolling = self._frame(w, BG)
+        scrolling.pack(side="top", fill="both", expand=True, padx=18, pady=(16, 1))
+        canvas = tk.Canvas(scrolling, bg=BG, highlightthickness=0, bd=0)
+        scrollbar = ttk.Scrollbar(scrolling, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+        inner = self._frame(canvas, BG)
+        window_id = canvas.create_window((0, 0), anchor="nw", window=inner)
+        inner.bind("<Configure>", lambda _: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>", lambda ev: canvas.itemconfigure(window_id, width=ev.width))
+
+        self._text(inner, "Налаштування", 19, GREEN, True, BG).pack(anchor="w", pady=(0, 15))
         self._text(inner, "Інтервал оновлення", 11, MUTED, bg=BG).pack(anchor="w")
         opts = {"30 секунд": 30, "1 хвилина": 60, "3 хвилини": 180,
-                "5 хвилин": 300, "10 хвилин": 600}
-        label = next((x for x, v in opts.items() if v == self.current_interval), "1 хвилина")
+                "5 хвилин": 300, "10 хвилин": 600, "15 хвилин": 900,
+                "30 хвилин": 1800, "1 година": 3600}
+        label = next((name for name, seconds in opts.items() if seconds == self.current_interval), "1 хвилина")
         self.refresh_choice = tk.StringVar(value=label)
-        c = ttk.Combobox(inner, values=tuple(opts), textvariable=self.refresh_choice, state="readonly")
-        c.pack(fill="x", pady=(5, 14))
+        ttk.Combobox(inner, values=tuple(opts), textvariable=self.refresh_choice,
+                     state="readonly").pack(fill="x", pady=(5, 11))
 
         autostart = tk.BooleanVar(value=is_autostart())
         tk.Checkbutton(inner, text="Запускати разом із Windows", variable=autostart,
                        font=("Segoe UI", 11), fg=WHITE, bg=BG,
-                       selectcolor=CARD2, activebackground=BG, activeforeground=WHITE).pack(anchor="w")
-        alert_on = tk.BooleanVar(value=bool(self.settings.get("alerts", True)))
-        tk.Checkbutton(inner, text="Повідомлення при 5% і 100%", variable=alert_on,
-                       font=("Segoe UI", 11), fg=WHITE, bg=BG,
-                       selectcolor=CARD2, activebackground=BG, activeforeground=WHITE).pack(anchor="w", pady=(5, 12))
+                       selectcolor=CARD2, activebackground=BG,
+                       activeforeground=WHITE).pack(anchor="w", pady=(1, 9))
+
+        rows: dict[str, list[tuple[tk.Frame, tk.BooleanVar, tk.StringVar]]] = {"low": [], "high": []}
+        parents: dict[str, tk.Frame] = {}
+
+        def add_threshold(direction: str, value: int, enabled: bool = True) -> None:
+            if len(rows[direction]) >= 30:
+                messagebox.showinfo("Сповіщення", "Можна додати до 30 порогів одного типу.", parent=w)
+                return
+            parent = parents[direction]
+            frame = self._frame(parent, CARD)
+            frame.pack(fill="x", padx=10, pady=3)
+            on_var = tk.BooleanVar(value=enabled)
+            percent_var = tk.StringVar(value=str(value))
+            tk.Checkbutton(frame, variable=on_var, text="Нижче" if direction == "low" else "Досягнуто",
+                           font=("Segoe UI", 10), fg=WHITE, bg=CARD,
+                           selectcolor=CARD2, activebackground=CARD,
+                           activeforeground=WHITE).pack(side="left", padx=(0, 5))
+            tk.Spinbox(frame, from_=1, to=100, width=5, textvariable=percent_var,
+                       font=("Segoe UI", 11, "bold"), justify="center", bg=CARD2,
+                       fg=WHITE, buttonbackground=CARD2, insertbackground=WHITE,
+                       relief="flat").pack(side="left", padx=3, ipady=3)
+            self._text(frame, "%", 10, WHITE).pack(side="left", padx=(3, 5))
+
+            def remove() -> None:
+                rows[direction] = [item for item in rows[direction] if item[0] is not frame]
+                frame.destroy()
+
+            tk.Button(frame, text="✕", command=remove, font=("Segoe UI", 11, "bold"),
+                      fg=RED, bg=CARD, activebackground=CARD2,
+                      activeforeground=WHITE, relief="flat", bd=0,
+                      cursor="hand2", width=2).pack(side="right", padx=2)
+            rows[direction].append((frame, on_var, percent_var))
+
+        def new_threshold(direction: str) -> None:
+            suggestions = (90, 70, 50, 30, 15, 5) if direction == "low" else (95, 100, 80, 90)
+            occupied = {int(pct.get()) for _, _, pct in rows[direction] if pct.get().isdigit()}
+            candidate = next((number for number in suggestions if number not in occupied), None)
+            if candidate is None:
+                candidate = next((number for number in range(1, 101) if number not in occupied), 50)
+            add_threshold(direction, candidate)
+
+        def section(direction: str, heading: str, hint: str) -> None:
+            area = self._frame(inner, CARD)
+            area.pack(fill="x", pady=(10, 4))
+            self._text(area, heading, 12, GREEN, True).pack(anchor="w", padx=12, pady=(12, 2))
+            self._text(area, hint, 9, MUTED, bg=CARD,
+                       wraplength=395, justify="left").pack(anchor="w", padx=12, pady=(0, 7))
+            parent = self._frame(area, CARD)
+            parent.pack(fill="x")
+            parents[direction] = parent
+            for rule in load_threshold_rules(self.settings, direction):
+                add_threshold(direction, rule["threshold"], rule["enabled"])
+            self._button(area, "+ Додати поріг", lambda d=direction: new_threshold(d),
+                         CARD2).pack(anchor="w", padx=12, pady=(8, 13))
+
+        section("low", "Сповіщення про низький заряд",
+                "Кілька порогів, наприклад 90%, 70%, 50%, 30%. Спрацюють при зниженні нижче порога.")
+        section("high", "Сповіщення про досягнення заряду",
+                "Кілька порогів при заряджанні, наприклад 95% і 100%.")
+        self._text(inner, "Якщо за одне оновлення заряд перетне кілька порогів, "
+                   "повідомлення надійде про кожен з них.", 9, MUTED, bg=BG,
+                   justify="left", wraplength=410).pack(anchor="w", pady=(8, 12))
 
         if len(self.devices) > 1:
             self._text(inner, "Станція", 11, MUTED, bg=BG).pack(anchor="w")
@@ -391,6 +451,25 @@ class MonitorApp:
             choice = None
 
         def save() -> None:
+            custom_rules = {}
+            for direction in ("low", "high"):
+                values = []
+                seen = set()
+                for _, enabled, percentage in rows[direction]:
+                    try:
+                        number = int(percentage.get().strip())
+                    except ValueError:
+                        messagebox.showerror("Неправильний поріг", "Вкажи ціле число від 1 до 100.", parent=w)
+                        return
+                    if not 1 <= number <= 100:
+                        messagebox.showerror("Неправильний поріг", "Відсоток має бути від 1 до 100.", parent=w)
+                        return
+                    if number in seen:
+                        messagebox.showerror("Повтор порога", f"Поріг {number}% доданий двічі. Видали повтор.", parent=w)
+                        return
+                    seen.add(number)
+                    values.append({"threshold": number, "enabled": enabled.get()})
+                custom_rules[direction] = values
             try:
                 set_autostart(autostart.get())
             except OSError as ex:
@@ -398,17 +477,26 @@ class MonitorApp:
                 return
             self.current_interval = opts[self.refresh_choice.get()]
             self.settings["interval"] = self.current_interval
-            self.settings["alerts"] = alert_on.get()
-            save_settings(self.settings)
+            self.settings["low_rules"] = custom_rules["low"]
+            self.settings["high_rules"] = custom_rules["high"]
+            self.settings["alerts"] = any(r["enabled"] for ruleset in custom_rules.values() for r in ruleset)
+            try:
+                save_settings(self.settings)
+            except OSError as ex:
+                messagebox.showerror("Помилка збереження", str(ex), parent=w)
+                return
             if choice is not None:
                 index = choice.current()
                 if index >= 0 and self.devices[index].dk != next((d.dk for d in self.devices if d.name == self.device_name), None):
                     self.commands.put(("choose", self.devices[index].dk))
+            # Rebase the comparison after changes. Don't emit spurious alerts.
+            self.commands.put(("notification_rules_changed",))
             self.commands.put(("poll",))
             w.destroy()
 
-        self._button(inner, "Зберегти", save).pack(fill="x", pady=(5, 10))
-        self._button(inner, "Змінити обліковий запис", lambda: (w.destroy(), self._login_mode()), CARD2).pack(fill="x")
+        self._button(footer, "Зберегти", save).pack(fill="x", pady=(0, 6))
+        self._button(footer, "Змінити обліковий запис",
+                     lambda: (w.destroy(), self._login_mode()), CARD2).pack(fill="x")
 
     def _worker(self) -> None:
         client = WonderfreeClient()
@@ -453,6 +541,9 @@ class MonitorApp:
                         last_battery = None
                         self.events.put(("device", selected_device.name))
                         next_poll = time.monotonic()
+                elif cmd[0] == "notification_rules_changed":
+                    last_battery = None
+                    next_poll = time.monotonic()
                 elif cmd[0] == "poll" and credentials:
                     if selected_device is None or time.monotonic() - client.login_mono > 90 * 60:
                         client.login(credentials["email"], credentials["password"], credentials["region"])
@@ -467,11 +558,12 @@ class MonitorApp:
                         raise WonderfreeError("Wonderfree не повернув рівень заряду")
                     history_add(con, value.battery, value.input_w, value.output_w)
                     self.events.put(("telemetry", value, selected_device.name))
-                    if last_battery is not None and self.settings.get("alerts", True):
-                        if last_battery > 5 >= value.battery:
-                            self.events.put(("notify", "Заряд станції впав до 5% або нижче", value.battery))
-                        elif last_battery < 100 == value.battery:
-                            self.events.put(("notify", "Станція повністю заряджена", value.battery))
+                    if last_battery is not None:
+                        for notice in multi_notification_messages(
+                                last_battery, value.battery,
+                                load_threshold_rules(self.settings, "low"),
+                                load_threshold_rules(self.settings, "high")):
+                            self.events.put(("notify", notice, value.battery))
                     last_battery = value.battery
                     next_poll = time.monotonic() + self.current_interval
             except (WonderfreeError, OSError, KeyError) as exc:
