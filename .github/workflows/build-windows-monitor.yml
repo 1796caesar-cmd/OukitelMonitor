@@ -26,6 +26,9 @@ jobs:
         with:
           python-version: '3.11'
           architecture: ${{ matrix.architecture }}
+      - name: Apply Windows settings and tray update
+        shell: pwsh
+        run: python windows_monitor/apply_update.py
       - name: Install dependencies
         shell: pwsh
         run: |
