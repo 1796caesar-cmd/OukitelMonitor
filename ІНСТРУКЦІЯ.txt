@@ -1,38 +1,32 @@
-OUKITEL MONITOR ANDROID 2.2 — ПЕРЕВІРКА ОНОВЛЕНЬ У ДОДАТКУ
+ВИПРАВЛЕННЯ — У OUKITEL MONITOR НЕМАЄ КНОПКИ ОНОВЛЕНЬ
 
-Що входить:
-1. Налаштування → «Перевірити оновлення».
-2. Перевірка останнього публічного GitHub Release (раз на добу при відкритті головного екрана та вручну з налаштувань).
-3. Повідомлення про нову версію; кнопка «Завантажити»; індикатор завантаження.
-4. Контроль розміру та SHA-256, перевірка ідентифікатора програми та versionCode перед встановленням.
-5. Відкриття стандартного встановлювача Android; самовільного встановлення немає.
-6. Файл APK усередині GitHub Actions Artifacts: OukitelMonitor-2.2.apk (не app-debug.apk).
-7. Автоматична публікація цього ж підписаного APK на вкладці GitHub Releases для роботи вбудованого завантаження.
+ПРИЧИНА:
+У репозиторії вже є файл scripts/update_22_inapp.py, але поточний
+.github/workflows/build-apk.yml продовжує збирати версію 1.10 (assembleDebug).
+GitHub Actions не запускає скрипти підпису та перевірки оновлень.
 
-ПІДГОТОВКА НА GITHUB
-  • Переконайтеся, що в цьому репозиторії вже створено такі Secrets (ті самі від MalinForest):
-    MALINFOREST_KEYSTORE_BASE64
-    MALINFOREST_STORE_PASSWORD
-    MALINFOREST_KEY_ALIAS
-    MALINFOREST_KEY_PASSWORD
-    Сам файл ключа .jks і паролі НЕ потрібно додавати у GitHub як звичайні файли!
-  • Відкрийте https://github.com/1796caesar-cmd/OukitelMonitor і натисніть «.» (github.dev).
-  • Завантажте/замініть у корені проєкту папки .github та scripts з архіву. Інші файли не видаляйте.
-  • Зробіть Commit & Push в main. Workflow «Build Android APK» запустить підписану збірку.
-  • Відкрийте Actions → остання Build Android APK. У кроці Name APK має бути:
-    app/build/outputs/apk/release/OukitelMonitor-2.2.apk
-  • Після зеленого завершення перевірте вкладку Releases:
-    https://github.com/1796caesar-cmd/OukitelMonitor/releases
-    Має з'явитися v2.2 з файлом OukitelMonitor-2.2.apk.
+ВАЖЛИВО: треба ЗАМІНИТИ вміст вже існуючого файлу:
+.github/workflows/build-apk.yml
+Не достатньо просто додати папку .github через Upload files —
+переконайтеся, що старий файл справді перезаписано!
 
-У ТЕЛЕФОНІ
-  • Установіть версію 2.2 один раз вручну із GitHub Releases або Artifacts.
-    Якщо попередній APK був підписаний debug-ключем, перехід на release-ключ може вимагати одноразового видалення старого APK (з утратою локальних налаштувань); це вимога Android.
-  • Надалі відкрийте OukitelMonitor → Налаштування → Перевірити оновлення.
-    Нове оновлення (2.3, 2.4...) з'являтиметься лише після публікації відповідного GitHub Release.
-    Установлення завжди підтверджується системою Android; для джерела Oukitel Monitor може знадобитися одноразовий дозвіл.
+СПОСІБ:
+1) Відкрийте https://github.com/1796caesar-cmd/OukitelMonitor
+2) Натисніть клавішу . (відкриється github.dev)
+3) У лівій колонці відкрийте .github/workflows/build-apk.yml
+4) Відкрийте завантажений build-apk.yml у Блокноті, виділіть усе Ctrl+A,
+   скопіюйте Ctrl+C. У github.dev у відкритому старому файлі
+   виділіть все Ctrl+A та вставте Ctrl+V.
+5) У розділі Source Control (іконка з гілкою) зробіть Commit & Push.
+6) Перевірте Actions: мають бути кроки
+   "Add in-app GitHub Releases updater for Android 2.2",
+   "Build signed release APK", "Publish signed APK in GitHub Releases".
+7) Завантажте OukitelMonitor-2.2.apk і встановіть.
 
-УВАГА
-  • GitHub Actions/Release 2.2 не зібрані та не перевірені на реальному телефоні в цьому середовищі.
-  • Підписувати ВСІ подальші версії потрібно ТИМ САМИМ ключем. Підвищуйте версію для кожного нового Release.
-  • Цей пакет торкається лише Android-оновлювача, номера версії та Android workflow. Windows-версію й логіку станції не змінює.
+Не завантажуйте в репозиторій .jks чи секрети!
+Секрети мають бути в Settings → Secrets and variables → Actions.
+
+ПРИМІТКА: Якщо раніше стояв APK, підписаний debug-ключем,
+Android не встановить release APK поверх нього. Такі ключі не сумісні.
+Під час видалення додатка втрачаються локальні дані й налаштування.
+Наступні оновлення, підписані тим самим постійним ключем, оновлюються поверх.
