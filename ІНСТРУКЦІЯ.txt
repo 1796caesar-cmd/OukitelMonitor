@@ -1,25 +1,38 @@
-OUKITEL MONITOR — автоматична назва APK з версією
+OUKITEL MONITOR ANDROID 2.2 — ПЕРЕВІРКА ОНОВЛЕНЬ У ДОДАТКУ
 
-Після підписаної збірки файл APK називатиметься:
-  OukitelMonitor-2.1.apk
-Наступні версії перейменовуватимуться автоматично (наприклад, OukitelMonitor-2.2.apk).
+Що входить:
+1. Налаштування → «Перевірити оновлення».
+2. Перевірка останнього публічного GitHub Release (раз на добу при відкритті головного екрана та вручну з налаштувань).
+3. Повідомлення про нову версію; кнопка «Завантажити»; індикатор завантаження.
+4. Контроль розміру та SHA-256, перевірка ідентифікатора програми та versionCode перед встановленням.
+5. Відкриття стандартного встановлювача Android; самовільного встановлення немає.
+6. Файл APK усередині GitHub Actions Artifacts: OukitelMonitor-2.2.apk (не app-debug.apk).
+7. Автоматична публікація цього ж підписаного APK на вкладці GitHub Releases для роботи вбудованого завантаження.
 
-У GitHub Actions -> Build Android APK -> Artifacts архів має назву
-  OukitelMonitor-2.1
-У ньому буде APK з відповідною назвою, а не app-release.apk.
+ПІДГОТОВКА НА GITHUB
+  • Переконайтеся, що в цьому репозиторії вже створено такі Secrets (ті самі від MalinForest):
+    MALINFOREST_KEYSTORE_BASE64
+    MALINFOREST_STORE_PASSWORD
+    MALINFOREST_KEY_ALIAS
+    MALINFOREST_KEY_PASSWORD
+    Сам файл ключа .jks і паролі НЕ потрібно додавати у GitHub як звичайні файли!
+  • Відкрийте https://github.com/1796caesar-cmd/OukitelMonitor і натисніть «.» (github.dev).
+  • Завантажте/замініть у корені проєкту папки .github та scripts з архіву. Інші файли не видаляйте.
+  • Зробіть Commit & Push в main. Workflow «Build Android APK» запустить підписану збірку.
+  • Відкрийте Actions → остання Build Android APK. У кроці Name APK має бути:
+    app/build/outputs/apk/release/OukitelMonitor-2.2.apk
+  • Після зеленого завершення перевірте вкладку Releases:
+    https://github.com/1796caesar-cmd/OukitelMonitor/releases
+    Має з'явитися v2.2 з файлом OukitelMonitor-2.2.apk.
 
-ПРОЦЕДУРА:
-1. Розпакувати цей архів на комп’ютері.
-2. У репозиторії 1796caesar-cmd/OukitelMonitor через github.dev додати/замінити
-   .github/workflows/build-apk.yml та scripts/update_21_signing.py.
-3. Commit & Push.
-4. Перевірити GitHub Actions. У разі успіху завантажити Artifact.
+У ТЕЛЕФОНІ
+  • Установіть версію 2.2 один раз вручну із GitHub Releases або Artifacts.
+    Якщо попередній APK був підписаний debug-ключем, перехід на release-ключ може вимагати одноразового видалення старого APK (з утратою локальних налаштувань); це вимога Android.
+  • Надалі відкрийте OukitelMonitor → Налаштування → Перевірити оновлення.
+    Нове оновлення (2.3, 2.4...) з'являтиметься лише після публікації відповідного GitHub Release.
+    Установлення завжди підтверджується системою Android; для джерела Oukitel Monitor може знадобитися одноразовий дозвіл.
 
-Якщо попередній пакет 2.1 вже завантажений у GitHub, достатньо замінити
-лише .github/workflows/build-apk.yml. Якщо ще ні — цей архів містить обидва файли.
-
-Підписний .jks-файл, паролі та ключі НЕ завантажувати в GitHub.
-Секрети MALINFOREST_* залишаються у Settings -> Secrets and variables -> Actions.
-
-Примітка: номер версії береться з versionName у Gradle ПІСЛЯ виконання скриптів;
-наступна зміна versionName автоматично змінить назву APK і архіву.
+УВАГА
+  • GitHub Actions/Release 2.2 не зібрані та не перевірені на реальному телефоні в цьому середовищі.
+  • Підписувати ВСІ подальші версії потрібно ТИМ САМИМ ключем. Підвищуйте версію для кожного нового Release.
+  • Цей пакет торкається лише Android-оновлювача, номера версії та Android workflow. Windows-версію й логіку станції не змінює.
