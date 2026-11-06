@@ -1,0 +1,25 @@
+OUKITEL MONITOR — автоматична назва APK з версією
+
+Після підписаної збірки файл APK називатиметься:
+  OukitelMonitor-2.1.apk
+Наступні версії перейменовуватимуться автоматично (наприклад, OukitelMonitor-2.2.apk).
+
+У GitHub Actions -> Build Android APK -> Artifacts архів має назву
+  OukitelMonitor-2.1
+У ньому буде APK з відповідною назвою, а не app-release.apk.
+
+ПРОЦЕДУРА:
+1. Розпакувати цей архів на комп’ютері.
+2. У репозиторії 1796caesar-cmd/OukitelMonitor через github.dev додати/замінити
+   .github/workflows/build-apk.yml та scripts/update_21_signing.py.
+3. Commit & Push.
+4. Перевірити GitHub Actions. У разі успіху завантажити Artifact.
+
+Якщо попередній пакет 2.1 вже завантажений у GitHub, достатньо замінити
+лише .github/workflows/build-apk.yml. Якщо ще ні — цей архів містить обидва файли.
+
+Підписний .jks-файл, паролі та ключі НЕ завантажувати в GitHub.
+Секрети MALINFOREST_* залишаються у Settings -> Secrets and variables -> Actions.
+
+Примітка: номер версії береться з versionName у Gradle ПІСЛЯ виконання скриптів;
+наступна зміна versionName автоматично змінить назву APK і архіву.
