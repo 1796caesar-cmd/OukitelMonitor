@@ -830,3 +830,166 @@ _service27_path.write_text(_service27, encoding='utf-8')
 _updater27_path.write_text(_updater27, encoding='utf-8')
 GRADLE.write_text(_gradle27, encoding='utf-8')
 print('OukitelMonitor 2.7: optional high-frequency command + detailed download dialog (MB, %, bar)')
+
+
+# 2.8 — five-minute battery history, native cascading address picker and
+# restore known-working active reporting on the first launch after upgrading.
+# This is part of the existing one-file patch: one commit triggers one Android
+# build and one release, without another Actions YAML workflow.
+_stats28_path = ROOT / 'app/src/main/java/com/oukitel/monitor/Statistics.kt'
+_main28 = MAIN.read_text(encoding='utf-8')
+_stats28 = _stats28_path.read_text(encoding='utf-8')
+_gradle28 = GRADLE.read_text(encoding='utf-8')
+
+# Restore old battery history and retain all REAL samples up to every five
+# minutes. SQLite avoids serializing a growing 31-day JSON list on each read.
+_stats_begin28 = 'object StatisticsStore {'
+_stats_end28 = 'class StatisticsChart('
+if _stats28.count(_stats_begin28) != 1 or _stats28.count(_stats_end28) != 1:
+    raise RuntimeError('2.8: StatisticsStore/StatisticsChart boundaries not found')
+_sa28 = _stats28.index(_stats_begin28)
+_sb28 = _stats28.index(_stats_end28, _sa28)
+_stats28 = _stats28[:_sa28] + '/** Battery history from successful reads: no more than one sample per five\n * minutes. The old 31-day JSON history is imported into SQLite once. */\nobject StatisticsStore {\n    data class Sample(val timestamp: Long, val battery: Int?, val input: Double?, val output: Double?)\n\n    private class HistoryDb(context: Context) :\n        android.database.sqlite.SQLiteOpenHelper(context, "oukitel_telemetry.db", null, 1) {\n        override fun onCreate(db: android.database.sqlite.SQLiteDatabase) {\n            db.execSQL("CREATE TABLE IF NOT EXISTS samples (id INTEGER PRIMARY KEY AUTOINCREMENT, t INTEGER NOT NULL, b INTEGER, i REAL, o REAL)")\n            db.execSQL("CREATE INDEX IF NOT EXISTS samples_time ON samples(t)")\n        }\n        override fun onUpgrade(db: android.database.sqlite.SQLiteDatabase, oldVersion: Int, newVersion: Int) {\n            // Schema v1 does not have an upgrade yet; do not discard history.\n        }\n    }\n\n    private var helper: HistoryDb? = null\n    private fun db(context: Context): android.database.sqlite.SQLiteDatabase {\n        if (helper == null) helper = HistoryDb(context.applicationContext)\n        return helper!!.writableDatabase\n    }\n\n    /** Import pre-2.8 graph points once, without rewriting or inventing values. */\n    private fun migrate(context: Context, sql: android.database.sqlite.SQLiteDatabase) {\n        val prefs = context.getSharedPreferences("oukitel", Context.MODE_PRIVATE)\n        if (prefs.getBoolean("statistics_sqlite_migrated_v1", false)) return\n        val old = prefs.getString("statistics", "[]") ?: "[]"\n        val items = try { JSONArray(old) } catch (_: Exception) { JSONArray() }\n        sql.beginTransaction()\n        try {\n            for (index in 0 until items.length()) {\n                val x = items.optJSONObject(index) ?: continue\n                val t = x.optLong("t", 0L)\n                if (t <= 0L) continue\n                val values = android.content.ContentValues().apply {\n                    put("t", t)\n                    if (x.has("b") && !x.isNull("b")) put("b", x.optInt("b"))\n                    if (x.has("i") && !x.isNull("i")) put("i", x.optDouble("i"))\n                    if (x.has("o") && !x.isNull("o")) put("o", x.optDouble("o"))\n                }\n                sql.insertOrThrow("samples", null, values)\n            }\n            sql.setTransactionSuccessful()\n        } finally { sql.endTransaction() }\n        prefs.edit().putBoolean("statistics_sqlite_migrated_v1", true)\n            .remove("statistics").remove("statistics_last").apply()\n    }\n\n    @Synchronized fun record(context: Context, battery: Int?, input: Double?, output: Double?) {\n        if (battery == null && input == null && output == null) return\n        try {\n            val sql = db(context)\n            migrate(context, sql)\n            val now = System.currentTimeMillis()\n            // The foreground UI and background service share this synchronized\n            // method, so concurrent updates still obey the five-minute limit.\n            val lastSample = sql.rawQuery("SELECT t FROM samples ORDER BY t DESC LIMIT 1", null).use {\n                if (it.moveToFirst()) it.getLong(0) else 0L\n            }\n            if (lastSample > 0L && now - lastSample < 300_000L) return\n            val item = android.content.ContentValues().apply {\n                put("t", now)\n                if (battery != null) put("b", battery.coerceIn(0, 100))\n                if (input != null && input.isFinite()) put("i", input)\n                if (output != null && output.isFinite()) put("o", output)\n            }\n            sql.insertOrThrow("samples", null, item)\n            val prefs = context.getSharedPreferences("oukitel", Context.MODE_PRIVATE)\n            val previousPrune = prefs.getLong("statistics_sqlite_last_prune", 0L)\n            if (now - previousPrune > 60L * 60L * 1000L) {\n                sql.delete("samples", "t < ?", arrayOf((now - 31L * 24 * 60 * 60 * 1000L).toString()))\n                prefs.edit().putLong("statistics_sqlite_last_prune", now).apply()\n            }\n        } catch (_: Exception) {\n            // Telemetry alerts must not fail if local history storage is full.\n        }\n    }\n\n    @Synchronized fun read(context: Context, hours: Int): List<Sample> {\n        val result = ArrayList<Sample>()\n        try {\n            val sql = db(context)\n            migrate(context, sql)\n            val since = System.currentTimeMillis() - hours.toLong() * 3_600_000L\n            val cursor = sql.rawQuery(\n                "SELECT t,b,i,o FROM samples WHERE t>=? ORDER BY t ASC,id ASC",\n                arrayOf(since.toString()))\n            cursor.use {\n                while (it.moveToNext()) {\n                    result.add(Sample(it.getLong(0),\n                        if (it.isNull(1)) null else it.getInt(1),\n                        if (it.isNull(2)) null else it.getDouble(2),\n                        if (it.isNull(3)) null else it.getDouble(3)))\n                }\n            }\n        } catch (_: Exception) {\n            // If storage is unavailable the chart stays empty, never guessed.\n        }\n        return result\n    }\n}\n\n' + _stats28[_sb28:]
+
+# The former page-sized browser gets replaced with four native Android
+# selectors, fed from the operator's live, hidden official webpage DOM.
+_begin28 = '    private fun showOfficialAddressSearch() {'
+_end28 = '    private fun saveSelectedOutageAddress(address: String, queue: String) {'
+if _main28.count(_begin28) != 1 or _main28.count(_end28) != 1:
+    raise RuntimeError('2.8: official address browser anchors not found')
+_a28 = _main28.index(_begin28)
+_b28 = _main28.index(_end28, _a28)
+_main28 = _main28[:_a28] + '    /** Native address picker. The official page runs invisibly as a read-only\n     * source for REM, town, street and house options. We do not ship a made-up\n     * address directory or call private/unverified Svitlochek endpoints. */\n    private fun showOfficialAddressSearch() {\n        currentAddressLookup?.close()\n        val picker = OutageAddressLookup()\n        currentAddressLookup = picker\n        picker.show()\n    }\n\n    private data class OutageChoice(val index: Int, val label: String)\n    private data class OutageHome(val number: String, val queue: String, val note: String)\n\n    private inner class OutageAddressLookup {\n        private val sourceUrl = "https://www.ztoe.com.ua/unhooking-search.php"\n        private val browser = android.webkit.WebView(this@MainActivity)\n        private val status = text("Підключення до Житомиробленерго…", 13f, muted)\n        private val remButton = chooser("1. РЕМ: завантаження…")\n        private val townButton = chooser("2. Населений пункт: обрати РЕМ")\n        private val streetButton = chooser("3. Вулиця: обрати населений пункт")\n        private val houseButton = chooser("4. Будинок: обрати вулицю")\n        private var closed = false\n        private var loaded = false\n        private var generation = 0\n        private var remName = ""\n        private var townName = ""\n        private var streetName = ""\n        private var homes = emptyList<OutageHome>()\n\n        private fun chooser(title: String) = text(title, 16f, white, true).apply {\n            background = shape(panel, 17, green)\n            setPadding(dp(15), dp(17), dp(15), dp(17))\n            isEnabled = false\n            alpha = 0.65f\n        }\n\n        private fun enable(view: TextView, enabled: Boolean) {\n            view.isEnabled = enabled\n            view.alpha = if (enabled) 1f else 0.65f\n        }\n\n        fun close() {\n            if (closed) return\n            closed = true\n            generation++\n            try {\n                browser.stopLoading()\n                browser.destroy()\n            } catch (_: Exception) { }\n        }\n\n        private fun warning(message: String) {\n            if (closed || currentScreen != "outage_address") return\n            status.text = message\n            status.setTextColor(Color.rgb(255, 179, 76))\n        }\n\n        fun show() {\n            currentScreen = "outage_address"\n            active = false\n            handler.removeCallbacks(tick)\n            val root = column().apply {\n                background = forestBackground()\n                setPadding(dp(17), dp(24), dp(17), dp(25))\n            }\n            add(root, text("‹   Графік відключень", 17f, green, true).apply {\n                setPadding(dp(3), dp(8), dp(3), dp(8))\n                setOnClickListener { showOutageSettingsPage() }\n            }); gap(root, 18)\n            add(root, text("Вибір адреси", 25f, white, true)); gap(root, 9)\n            add(root, text("Обери адресу зі списків Житомиробленерго. Сайт відкривати не потрібно.", 13f, muted))\n            gap(root, 16)\n            add(root, remButton); gap(root, 10)\n            add(root, townButton); gap(root, 10)\n            add(root, streetButton); gap(root, 10)\n            add(root, houseButton); gap(root, 14)\n            add(root, status)\n            gap(root, 8)\n            add(root, text("Якщо довідник недоступний, можна обрати підчергу вручну в попередньому меню.", 12f, muted))\n            // Attached to the Activity, but hidden: only its published DOM is\n            // read. The user sees the four native Android selectors above.\n            browser.alpha = 0f\n            browser.isFocusable = false\n            browser.settings.javaScriptEnabled = true\n            browser.settings.domStorageEnabled = true\n            browser.settings.allowFileAccess = false\n            browser.settings.allowContentAccess = false\n            browser.webViewClient = object : android.webkit.WebViewClient() {\n                override fun shouldOverrideUrlLoading(\n                    view: android.webkit.WebView,\n                    request: android.webkit.WebResourceRequest\n                ): Boolean {\n                    val uri = request.url\n                    val host = uri.host.orEmpty().lowercase(Locale.ROOT)\n                    return uri.scheme != "https" || (host != "ztoe.com.ua" && host != "www.ztoe.com.ua")\n                }\n                override fun onPageFinished(view: android.webkit.WebView, url: String) {\n                    if (closed || currentScreen != "outage_address" || !url.startsWith("https://")) return\n                    loaded = true\n                    if (remName.isBlank()) checkOptions(0, 0)\n                    else if (townName.isBlank()) checkOptions(1, 0)\n                    else if (streetName.isBlank()) checkOptions(2, 0)\n                    else checkHouses(0)\n                }\n                override fun onReceivedError(view: android.webkit.WebView,\n                    request: android.webkit.WebResourceRequest,\n                    error: android.webkit.WebResourceError) {\n                    if (request.isForMainFrame) warning("Не вдалося завантажити довідник адрес. Перевір інтернет.")\n                }\n            }\n            root.addView(browser, LinearLayout.LayoutParams(dp(1), dp(1)))\n            remButton.setOnClickListener { showOptions(0) }\n            townButton.setOnClickListener { showOptions(1) }\n            streetButton.setOnClickListener { showOptions(2) }\n            houseButton.setOnClickListener { showHouses() }\n            setContentView(ScrollView(this@MainActivity).apply {\n                background = forestBackground()\n                isFillViewport = true\n                addView(root)\n            })\n            browser.loadUrl(sourceUrl)\n        }\n\n        private fun evaluate(js: String, callback: (JSONObject) -> Unit) {\n            if (closed || !loaded || currentScreen != "outage_address") return\n            browser.evaluateJavascript(js) { raw ->\n                if (closed || currentScreen != "outage_address") return@evaluateJavascript\n                try {\n                    // evaluateJavascript returns a JSON-encoded JavaScript string.\n                    val decoded = org.json.JSONTokener(raw).nextValue().toString()\n                    callback(JSONObject(decoded))\n                } catch (_: Exception) {\n                    warning("Не вдалося прочитати дані сайту. Можна вибрати графік за чергою.")\n                }\n            }\n        }\n\n        private fun optionsScript(step: Int) = """(function(){\n            try {\n                var el = document.querySelectorAll(\'select\')[$step];\n                if (!el) return JSON.stringify({items:[], error:\'Відсутній список\'});\n                var a = [];\n                for (var i = 0; i < el.options.length; i++) {\n                    var o = el.options[i], name = (o.textContent || \'\').replace(/\\s+/g,\' \').trim();\n                    if (o.disabled || !o.value || !name || /^-+$/.test(name) ||\n                        /^(-?\\s*(оберіть|виберіть|select|вкажіть))/i.test(name)) continue;\n                    a.push({index:i,label:name});\n                }\n                return JSON.stringify({items:a});\n            } catch(e){return JSON.stringify({items:[],error:String(e)});}\n        })()""".trimIndent()\n\n        private fun choices(obj: JSONObject): List<OutageChoice> {\n            val list = obj.optJSONArray("items") ?: return emptyList()\n            val choices = mutableListOf<OutageChoice>()\n            for (i in 0 until list.length()) {\n                val o = list.optJSONObject(i) ?: continue\n                val index = o.optInt("index", -1)\n                val name = o.optString("label").trim()\n                if (index >= 0 && name.isNotBlank()) choices.add(OutageChoice(index, name))\n            }\n            return choices\n        }\n\n        private fun checkOptions(step: Int, attempt: Int) {\n            if (closed || currentScreen != "outage_address") return\n            val token = generation\n            handler.postDelayed({\n                if (closed || token != generation || currentScreen != "outage_address") return@postDelayed\n                evaluate(optionsScript(step)) { result ->\n                    val items = choices(result)\n                    if (items.isNotEmpty()) {\n                        when (step) {\n                            0 -> { remButton.text = "1. РЕМ: обрати   ▾"; enable(remButton, true) }\n                            1 -> { townButton.text = "2. Населений пункт: обрати   ▾"; enable(townButton, true) }\n                            2 -> { streetButton.text = "3. Вулиця: обрати   ▾"; enable(streetButton, true) }\n                        }\n                        status.text = "Обери ${arrayOf("РЕМ", "населений пункт", "вулицю")[step]}"\n                    } else if (attempt < 7) {\n                        checkOptions(step, attempt + 1)\n                    } else warning("Сайт не повернув список адрес. Спробуй пізніше або обери графік за чергою.")\n                }\n            }, if (attempt == 0) 300L else 750L)\n        }\n\n        private fun showOptions(step: Int) {\n            if (closed || !loaded) return\n            evaluate(optionsScript(step)) { result ->\n                val items = choices(result)\n                if (items.isEmpty()) { warning("Список поки недоступний. Спробуй ще раз."); return@evaluate }\n                android.app.AlertDialog.Builder(this@MainActivity)\n                    .setTitle(arrayOf("Обери РЕМ", "Обери населений пункт", "Обери вулицю")[step])\n                    .setItems(items.map { it.label }.toTypedArray()) { _, at ->\n                        val selected = items[at]\n                        when (step) {\n                            0 -> {\n                                remName = selected.label\n                                townName = ""; streetName = ""; homes = emptyList()\n                                remButton.text = "1. РЕМ: $remName   ▾"\n                                townButton.text = "2. Населений пункт: завантаження…"\n                                streetButton.text = "3. Вулиця: обрати населений пункт"\n                                houseButton.text = "4. Будинок: обрати вулицю"\n                                enable(townButton, false); enable(streetButton, false); enable(houseButton, false)\n                            }\n                            1 -> {\n                                townName = selected.label\n                                streetName = ""; homes = emptyList()\n                                townButton.text = "2. Населений пункт: $townName   ▾"\n                                streetButton.text = "3. Вулиця: завантаження…"\n                                houseButton.text = "4. Будинок: обрати вулицю"\n                                enable(streetButton, false); enable(houseButton, false)\n                            }\n                            2 -> {\n                                streetName = selected.label\n                                homes = emptyList()\n                                streetButton.text = "3. Вулиця: $streetName   ▾"\n                                houseButton.text = "4. Будинок: завантаження…"\n                                enable(houseButton, false)\n                            }\n                        }\n                        generation++\n                        val token = generation\n                        val script = """(function(){try {\n                            var el=document.querySelectorAll(\'select\')[$step];\n                            if(!el)return JSON.stringify({ok:false});\n                            el.selectedIndex=${selected.index};\n                            el.dispatchEvent(new Event(\'change\',{bubbles:true}));\n                            return JSON.stringify({ok:true});\n                        }catch(e){return JSON.stringify({ok:false});}})()""".trimIndent()\n                        evaluate(script) { answer ->\n                            if (!answer.optBoolean("ok")) {\n                                warning("Сайт не прийняв вибір. Спробуй знову.")\n                            } else if (!closed && token == generation) {\n                                if (step < 2) checkOptions(step + 1, 0) else checkHouses(0)\n                            }\n                        }\n                    }\n                    .setNegativeButton("Скасувати", null).show()\n            }\n        }\n\n        private fun housesScript() = """(function(){\n            try {\n                var rows=[], tr=document.querySelectorAll(\'tr\');\n                for (var i=0;i<tr.length;i++) {\n                    var td=tr[i].querySelectorAll(\'td\');\n                    if(td.length<7)continue;\n                    var c=[];\n                    for(var j=0;j<td.length;j++) c.push((td[j].innerText||td[j].textContent||\'\').replace(/\\s+/g,\' \').trim());\n                    if (!/^[1-6]$/.test(c[4]) || !/^[12]$/.test(c[5]) || !c[3])continue;\n                    rows.push({rem:c[0],town:c[1],street:c[2],houses:c[3],group:c[4]+\'.\'+c[5],note:c[6]||\'\'});\n                }\n                return JSON.stringify({rows:rows.slice(0,500),total:rows.length});\n            }catch(e){return JSON.stringify({rows:[],error:String(e)});}\n        })()""".trimIndent()\n\n        private fun normalize(value: String): String {\n            var x = value.lowercase(Locale.ROOT).replace(Regex("\\\\s+"), " ").trim()\n            x = x.removeSuffix(" рем").trim()\n            for (prefix in arrayOf("місто ", "м. ", "село ", "с. ", "селище ", "смт. ", "смт ")) {\n                if (x.startsWith(prefix)) { x = x.removePrefix(prefix); break }\n            }\n            x = x.replace("вул. ", "вулиця ").replace("пров. ", "провулок ")\n            return x.trim()\n        }\n\n        private fun checkHouses(attempt: Int) {\n            if (closed || currentScreen != "outage_address") return\n            val token = generation\n            handler.postDelayed({\n                if (closed || token != generation || currentScreen != "outage_address") return@postDelayed\n                evaluate(housesScript()) { result ->\n                    val array = result.optJSONArray("rows")\n                    val newHomes = mutableListOf<OutageHome>()\n                    val matchRem = normalize(remName)\n                    val matchTown = normalize(townName)\n                    val matchStreet = normalize(streetName)\n                    if (array != null && result.optInt("total") <= 500) {\n                        for (i in 0 until array.length()) {\n                            val row = array.optJSONObject(i) ?: continue\n                            if (normalize(row.optString("rem")) != matchRem ||\n                                normalize(row.optString("town")) != matchTown ||\n                                normalize(row.optString("street")) != matchStreet) continue\n                            val group = row.optString("group")\n                            if (group !in OutageSchedule.VALID_GROUPS) continue\n                            val note = row.optString("note")\n                            for (house in row.optString("houses").split(Regex("[,;]"))) {\n                                val clean = house.trim()\n                                if (clean.any { it.isDigit() } && clean.length <= 30)\n                                    newHomes.add(OutageHome(clean, group, note))\n                            }\n                        }\n                    }\n                    if (newHomes.isNotEmpty()) {\n                        homes = newHomes.distinctBy { it.number + "|" + it.queue + "|" + it.note }\n                            .sortedWith(compareBy({ it.number.takeWhile { c -> c.isDigit() }.toIntOrNull() ?: Int.MAX_VALUE }, { it.number }))\n                        houseButton.text = "4. Будинок: обрати   ▾"\n                        enable(houseButton, true)\n                        status.text = "Обери номер будинку. Підчергу визначимо автоматично."\n                    } else if (attempt < 7) {\n                        checkHouses(attempt + 1)\n                    } else warning("Сайт не повернув адреси з підчергами для вибраної вулиці. Можна вибрати підчергу вручну.")\n                }\n            }, if (attempt == 0) 700L else 850L)\n        }\n\n        private fun showHouses() {\n            if (homes.isEmpty()) return\n            val labels = homes.map { home -> home.number +\n                (if (home.note.isBlank()) "" else " · ${home.note}") + " · ${home.queue}" }\n            android.app.AlertDialog.Builder(this@MainActivity)\n                .setTitle("Вибери номер будинку")\n                .setItems(labels.toTypedArray()) { _, which ->\n                    val home = homes[which]\n                    val address = "$townName, $streetName, ${home.number}"\n                    saveSelectedOutageAddress(address, home.queue)\n                }\n                .setNegativeButton("Скасувати", null).show()\n        }\n    }\n\n' + _main28[_b28:]
+_main28 = one(_main28,
+    '    private var outageStatus: TextView? = null',
+    '    private var outageStatus: TextView? = null\n    private var currentAddressLookup: OutageAddressLookup? = null',
+    '2.8: address lookup state')
+_main28 = one(_main28,
+    '    private fun showOutageSettingsPage() {',
+    '    private fun showOutageSettingsPage() {\n        currentAddressLookup?.close()\n        currentAddressLookup = null',
+    '2.8: cleanup hidden address lookup')
+
+# A real device test confirmed normal GET-only reads do not refresh reliably.
+# On the first run of 2.8, use the proven previous active mode automatically.
+# Users can still change the experimental setting themselves afterwards.
+_main28 = one(_main28,
+    'override fun onCreate(savedInstanceState: Bundle?) { super.onCreate();',
+    'override fun onCreate(savedInstanceState: Bundle?) { super.onCreate();\n'
+    '        val p28 = prefs()\n'
+    '        if (!p28.getBoolean("reporting_mode_28_initialized", false)) {\n'
+    '            p28.edit().putBoolean("active_data_reporting_enabled", true)\n'
+    '                .putBoolean("reporting_mode_28_initialized", true).apply()\n'
+    '        }\n',
+    '2.8: migration to tested active reporting')
+_gradle28 = one(_gradle28, 'versionName = "2.7"', 'versionName = "2.8"', '2.8 version')
+
+# Only write after every match was checked.
+MAIN.write_text(_main28, encoding='utf-8')
+_stats28_path.write_text(_stats28, encoding='utf-8')
+GRADLE.write_text(_gradle28, encoding='utf-8')
+print('OukitelMonitor 2.8: points >=5 min apart; active mode default; native address cascade')
+
+
+# 2.9 — keep ONLY the reliable active telemetry mode and make the battery
+# history open at approximately the last hour by default.  User can pinch to
+# zoom out to the whole chosen 24h / 7d / 30d period and back in.
+# This is an append to the existing 2.5-2.8 patch: no new workflow required.
+_stats29_path = ROOT / 'app/src/main/java/com/oukitel/monitor/Statistics.kt'
+_service29_path = ROOT / 'app/src/main/java/com/oukitel/monitor/MonitorService.kt'
+_main29 = MAIN.read_text(encoding='utf-8')
+_stats29 = _stats29_path.read_text(encoding='utf-8')
+_service29 = _service29_path.read_text(encoding='utf-8')
+_gradle29 = GRADLE.read_text(encoding='utf-8')
+
+# Restore the known-working active-reporting command for both foreground and
+# background polling, regardless of stale experimental user preferences.
+# This does not turn the station's AC/DC outputs on/off.
+_main29 = one(_main29,
+    '''    private fun wakeCloud(s: Session) {
+        if (!prefs().getBoolean("active_data_reporting_enabled", false)) return
+''',
+    '''    private fun wakeCloud(s: Session) {
+''', '2.9: restore always-active foreground telemetry')
+_service29 = one(_service29,
+    '''    private fun wakeCloud(session: JSONObject) {
+        if (!prefs.getBoolean("active_data_reporting_enabled", false)) return
+''',
+    '''    private fun wakeCloud(session: JSONObject) {
+''', '2.9: restore always-active background telemetry')
+
+# Drop the entire experimental choice UI. Preserve other settings sections,
+# alerts, persisted telemetry, existing schedule and APK progress dialog.
+_begin29 = '    private fun addDataRetrievalSettings(root: LinearLayout) {'
+_end29 = '    private fun showSettings() {'
+if _main29.count(_begin29) != 1 or _main29.count(_end29) != 1:
+    raise RuntimeError('2.9: experimental settings method boundaries not found')
+_a29 = _main29.index(_begin29)
+_b29 = _main29.index(_end29, _a29)
+_main29 = _main29[:_a29] + _main29[_b29:]
+_main29 = one(_main29,
+    '''        addDataRetrievalSettings(root)
+        gap(root,26)
+''', '', '2.9: remove experimental settings entry')
+_main29 = one(_main29,
+    '''        val p28 = prefs()
+        if (!p28.getBoolean("reporting_mode_28_initialized", false)) {
+            p28.edit().putBoolean("active_data_reporting_enabled", true)
+                .putBoolean("reporting_mode_28_initialized", true).apply()
+        }
+''', '', '2.9: remove old experimental migration')
+
+# The 2.4 chart keeps zoom/pan and resetZoom() shows the entire selected period.
+# Show the last ~60 minutes of REAL samples whenever its data period opens.
+# For histories shorter than an hour we show all available readings.
+_stats29 = one(_stats29,
+    '''    fun setEntries(data: List<StatisticsStore.Sample>) {
+        entries = data.sortedBy { it.timestamp }
+        selectedIndex = -1
+        resetZoom()
+    }
+''',
+    '''    fun showLastHour() {
+        val (first, last) = limits()
+        visibleEnd = last
+        visibleStart = maxOf(first, last - 60.0 * 60_000.0)
+        invalidate()
+    }
+
+    fun setEntries(data: List<StatisticsStore.Sample>) {
+        entries = data.sortedBy { it.timestamp }
+        selectedIndex = -1
+        showLastHour()
+    }
+''', '2.9: one-hour initial chart viewport')
+
+# Clarify how to zoom OUT and give explicit buttons for the full period and
+# the most recent hour, besides the existing pinch gesture.
+_main29 = one(_main29,
+    '"Розведи два пальці для збільшення, проведи по графіку для переміщення."',
+    '"Зведи або розведи два пальці для масштабу, проведи по графіку для переміщення."',
+    '2.9: explain both zoom directions')
+_main29 = one(_main29,
+    '"↺   Скинути масштаб"',
+    '"↔   Показати весь період"',
+    '2.9: label full-period chart button')
+_main29 = one(_main29,
+    '''        add(root,resetScale); gap(root,18)''',
+    '''        add(root,resetScale); gap(root,8)
+        val hourScale = text("◷   Остання година",16f,green,true).apply {
+            background=shape(panel,16,green)
+            gravity=Gravity.CENTER
+            setPadding(dp(15),dp(13),dp(15),dp(13))
+            setOnClickListener { batteryChart.showLastHour() }
+        }
+        add(root,hourScale); gap(root,18)''',
+    '2.9: quick return to last-hour chart view')
+
+_gradle29 = one(_gradle29, 'versionName = "2.8"',
+    'versionName = "2.9"', '2.9 version')
+
+# Commit generated sources only once all transforms have succeeded.
+MAIN.write_text(_main29, encoding='utf-8')
+_service29_path.write_text(_service29, encoding='utf-8')
+_stats29_path.write_text(_stats29, encoding='utf-8')
+GRADLE.write_text(_gradle29, encoding='utf-8')
+print('OukitelMonitor 2.9: active-only telemetry, no experiment UI, last-hour chart initially, reversible zoom')
