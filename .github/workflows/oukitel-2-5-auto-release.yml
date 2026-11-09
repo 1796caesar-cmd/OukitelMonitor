@@ -47,12 +47,11 @@ jobs:
       - name: Add chart zoom 2.4
         run: python3 scripts/update_24_chart_zoom.py
 
-      - name: Add outage schedules 2.5 (compatible with 1.6)
+      - name: Add outage schedules 2.5-2.12
         shell: bash
         run: |
           set -euo pipefail
-          # update_16.py renamed the refresh field to connectionText.
-          # Patch the old 2.5 script in the CI working copy, not the repository.
+          # Legacy patch compatibility: update_16 renamed refresh to connectionText.
           python3 - <<'PY'
           from pathlib import Path
           p = Path("scripts/update_25_outage_schedule.py")
@@ -61,10 +60,415 @@ jobs:
           new = "    private lateinit var connectionText: TextView"
           count = s.count(old)
           if count != 2:
-              raise SystemExit(f"Unexpected 2.5 script structure: expected 2 old field anchors, found {count}")
+              raise SystemExit(f"Expected 2 old field anchors, found {count}")
           p.write_text(s.replace(old, new), encoding="utf-8")
           PY
           python3 scripts/update_25_outage_schedule.py
+
+      - name: Apply OukitelMonitor 2.13 3D indicator styles and themed update dialogs
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          """Android 2.13: 3D charge gauges, submenu for indicator style, themed update result dialogs.
+          Run immediately after update_25_outage_schedule.py has produced version 2.12.
+          """
+          from pathlib import Path
+          ROOT = Path.cwd()
+          MAIN = ROOT/'app/src/main/java/com/oukitel/monitor/MainActivity.kt'
+          UPD = ROOT/'app/src/main/java/com/oukitel/monitor/UpdateManager.kt'
+          GRADLE = ROOT/'app/build.gradle.kts'
+          main = MAIN.read_text(encoding='utf8')
+          upd = UPD.read_text(encoding='utf8')
+          gradle = GRADLE.read_text(encoding='utf8')
+          
+          def once(s, old, new, title):
+              n=s.count(old)
+              if n!=1: raise RuntimeError(f'2.13 {title}: expected 1 match, found {n}')
+              return s.replace(old,new,1)
+          
+          # Keep existing preferences, existing percentage text and exact five style IDs.
+          start='    private inner class BatteryView(private val previewStyle: Int? = null) : android.widget.FrameLayout(this) {'
+          end='    private data class AlertRule('
+          if main.count(start)!=1 or main.count(end)!=1: raise RuntimeError('2.13 BatteryView boundaries not unique')
+          new_battery = r'''    /** Real 3D-style Canvas indicators: the miniature preview and main dial share a renderer. */
+              private inner class BatteryView(private val previewStyle: Int? = null) : android.widget.FrameLayout(this) {
+                  var level: Int = if (previewStyle == null) 0 else 75
+                      set(value) { field = value.coerceIn(0, 100); invalidate() }
+          
+                  val percent = text(if (previewStyle == null) "—%" else "75%",
+                      if (previewStyle == null) 65f else 23f, white, true).apply {
+                      gravity = Gravity.CENTER
+                  }
+          
+                  init {
+                      setWillNotDraw(false)
+                      // Soft relief shadows require software shadow rendering only for this small gauge view.
+                      setLayerType(View.LAYER_TYPE_SOFTWARE, null)
+                      val center = column().apply { gravity = Gravity.CENTER }
+                      add(center, percent)
+                      add(center, text(if (previewStyle == null) "Заряд батареї" else "Заряд",
+                          if (previewStyle == null) 16f else 9f, muted).apply { gravity = Gravity.CENTER })
+                      addView(center, android.widget.FrameLayout.LayoutParams(
+                          dp(if (previewStyle == null) 230 else 95),
+                          dp(if (previewStyle == null) 105 else 62), Gravity.CENTER))
+                  }
+          
+                  override fun onDraw(canvas: Canvas) {
+                      super.onDraw(canvas)
+                      val d = resources.displayMetrics.density
+                      val mini = previewStyle != null
+                      val cx = width / 2f
+                      val cy = height / 2f
+                      val radius = minOf(width / 2f - (if (mini) 18f else 36f)*d,
+                          height / 2f - (if (mini) 18f else 30f)*d)
+                          .coerceAtLeast(if (mini) 26f*d else 40f*d)
+                      val arc = RectF(cx-radius, cy-radius, cx+radius, cy+radius)
+                      val charge = level.coerceIn(0, 100)
+                      val ratio = charge / 100f
+                      val style = (previewStyle ?: prefs().getInt("battery_indicator_style", 0)).coerceIn(0, 4)
+                      // These alert colors remain fixed in all six themes.
+                      val active = when {
+                          charge <= 15 -> Color.rgb(238, 82, 73)
+                          charge <= 30 -> Color.rgb(244, 180, 62)
+                          else -> Color.rgb(43, 203, 101)
+                      }
+                      val lightActive = blend(active, Color.WHITE, 0.34f)
+                      val darkActive = blend(active, Color.BLACK, 0.33f)
+                      val track = blend(panel, Color.BLACK, 0.32f)
+                      val raisedTrack = blend(panel, muted, 0.20f)
+                      val p = Paint(Paint.ANTI_ALIAS_FLAG)
+          
+                      fun arcStroke(box: RectF, first: Float, sweep: Float, thickness: Float,
+                                    color: Int, glossy: Boolean, rounded: Boolean = true) {
+                          if (sweep == 0f) return
+                          p.reset()
+                          p.isAntiAlias = true
+                          p.style = Paint.Style.STROKE
+                          p.strokeCap = if (rounded) Paint.Cap.ROUND else Paint.Cap.BUTT
+                          // Soft recessed lower rim and cast shadow form the visible depth.
+                          p.strokeWidth = thickness + (if (glossy) 2.6f else 2f)*d
+                          p.color = blend(color, Color.BLACK, 0.55f)
+                          p.setShadowLayer((if (mini) 2f else 5f)*d, 0f, (if (mini) 1f else 3f)*d,
+                              Color.argb(if (glossy) 105 else 70, 0, 0, 0))
+                          canvas.drawArc(box, first, sweep, false, p)
+                          p.clearShadowLayer()
+                          p.strokeWidth = thickness
+                          p.color = color
+                          if (glossy) p.shader = LinearGradient(box.left, box.top, box.right, box.bottom,
+                              intArrayOf(lightActive, active, darkActive), null, Shader.TileMode.CLAMP)
+                          canvas.drawArc(box, first, sweep, false, p)
+                          p.shader = null
+                          // Narrow illuminated edge follows the same visible part of the gauge.
+                          if (glossy) {
+                              val shift = (if (mini) 2.5f else 5f)*d
+                              val inner = RectF(box.left+shift, box.top+shift,
+                                  box.right-shift, box.bottom-shift)
+                              p.strokeWidth = (if (mini) 1.1f else 2.5f)*d
+                              p.color = Color.argb(155, 255, 255, 255)
+                              canvas.drawArc(inner, first, sweep, false, p)
+                          }
+                          p.reset()
+                          p.isAntiAlias = true
+                      }
+          
+                      // A faint recessed bowl makes all five styles look raised instead of flat.
+                      p.style = Paint.Style.FILL
+                      p.shader = RadialGradient(cx, cy-radius*0.20f, radius*1.20f,
+                          intArrayOf(blend(panel, white, 0.10f), panel, blend(panel, Color.BLACK, 0.15f)),
+                          null, Shader.TileMode.CLAMP)
+                      canvas.drawCircle(cx, cy, radius*0.83f, p)
+                      p.shader = null
+          
+                      when (style) {
+                          0 -> {
+                              // Familiar full circle, now with beveled rim and reflected light.
+                              val width = (if (mini) 10f else 25f)*d
+                              arcStroke(arc, 0f, 360f, width, raisedTrack, false)
+                              arcStroke(arc, -90f, 360f*ratio, width, active, true)
+                          }
+                          1 -> {
+                              // Both neon arc bars start at the TOP and shrink together to the BOTTOM.
+                              // Left travels counter-clockwise; right clockwise; BOTH get the same ratio.
+                              val width = (if (mini) 10f else 23f)*d
+                              val firstRight = -71f
+                              val firstLeft = 251f
+                              val sweep = 142f
+                              arcStroke(arc, firstRight, sweep, width, raisedTrack, false, false)
+                              arcStroke(arc, 109f, sweep, width, raisedTrack, false, false)
+                              arcStroke(arc, firstRight, sweep*ratio, width, active, true, false)
+                              arcStroke(arc, firstLeft, -sweep*ratio, width, active, true, false)
+                              // Fine bezel outside the bright parallel bars.
+                              val outer = RectF(arc.left-12*d, arc.top-12*d, arc.right+12*d, arc.bottom+12*d)
+                              p.style = Paint.Style.STROKE
+                              p.strokeWidth = (if (mini) 0.8f else 1.4f)*d
+                              p.color = blend(muted, panel, 0.40f)
+                              canvas.drawArc(outer, -72f, 144f, false, p)
+                              canvas.drawArc(outer, 108f, 144f, false, p)
+                          }
+                          2 -> {
+                              // Domed liquid battery: glass rim, shaded fluid and specular sheen.
+                              val disk = Path().apply { addCircle(cx, cy, radius, Path.Direction.CW) }
+                              p.style = Paint.Style.FILL
+                              p.shader = RadialGradient(cx-radius*0.24f, cy-radius*0.32f,
+                                  radius*1.8f, intArrayOf(blend(panel, white, 0.30f),
+                                      blend(panel, Color.BLACK, 0.30f)), null, Shader.TileMode.CLAMP)
+                              canvas.drawCircle(cx, cy, radius, p)
+                              p.shader = null
+                              canvas.save()
+                              canvas.clipPath(disk)
+                              val surface = cy+radius - radius*2f*ratio
+                              p.shader = LinearGradient(cx-radius, cy-radius, cx+radius, cy+radius,
+                                  intArrayOf(lightActive, active, darkActive), null, Shader.TileMode.CLAMP)
+                              canvas.drawRect(cx-radius, surface, cx+radius, cy+radius, p)
+                              p.shader = null
+                              if (charge in 1..99) {
+                                  p.style = Paint.Style.STROKE
+                                  p.strokeWidth = (if (mini) 1.2f else 3f)*d
+                                  p.color = Color.argb(180, 255, 255, 255)
+                                  canvas.drawLine(cx-radius, surface, cx+radius, surface, p)
+                              }
+                              p.style = Paint.Style.FILL
+                              p.color = Color.argb(54,255,255,255)
+                              canvas.drawOval(RectF(cx-radius*0.72f, cy-radius*0.78f,
+                                  cx+radius*0.58f, cy-radius*0.37f), p)
+                              canvas.restore()
+                              p.style = Paint.Style.STROKE
+                              p.strokeWidth = (if (mini) 3f else 6f)*d
+                              p.color = darkActive
+                              p.setShadowLayer((if (mini) 2f else 4f)*d, 0f, 2f*d, Color.argb(130,0,0,0))
+                              canvas.drawCircle(cx,cy,radius,p)
+                              p.clearShadowLayer()
+                              p.strokeWidth = (if (mini) 1f else 2.6f)*d
+                              p.color = lightActive
+                              canvas.drawCircle(cx,cy,radius-3*d,p)
+                          }
+                          3 -> {
+                              // Bold unobstructed 280-degree relief arc; NO battery glyph.
+                              val width = (if (mini) 12f else 24f)*d
+                              arcStroke(arc, 130f, 280f, width, raisedTrack, false)
+                              arcStroke(arc, 130f, 280f*ratio, width, active, true)
+                          }
+                          else -> {
+                              // Pastel tachometer: thicker raised 48 ticks and a soft 3D disk.
+                              val diskRadius = radius*0.76f
+                              p.style = Paint.Style.FILL
+                              p.shader = RadialGradient(cx-radius*0.19f,cy-radius*0.25f,radius*1.25f,
+                                  intArrayOf(blend(panel,white,0.39f),
+                                      blend(panel,active,0.20f),blend(panel,Color.BLACK,0.16f)),
+                                  null,Shader.TileMode.CLAMP)
+                              canvas.drawCircle(cx,cy,diskRadius,p)
+                              p.shader = null
+                              for (i in 0 until 48) {
+                                  val angle = Math.toRadians(-90.0 + i*7.5)
+                                  val r1 = radius*0.82f
+                                  val r2 = radius*(if (i%4==0) 1.09f else 1.02f)
+                                  val ax = cx+Math.cos(angle).toFloat()*r1
+                                  val ay = cy+Math.sin(angle).toFloat()*r1
+                                  val bx = cx+Math.cos(angle).toFloat()*r2
+                                  val by = cy+Math.sin(angle).toFloat()*r2
+                                  val filled = i < ratio*48f
+                                  val sw = (if (i%4==0) (if (mini) 4.4f else 6.5f)
+                                      else (if (mini) 3.4f else 5.3f))*d
+                                  p.style=Paint.Style.STROKE
+                                  p.strokeCap=Paint.Cap.ROUND
+                                  p.strokeWidth=sw+1.4f*d
+                                  p.color=blend(panel,Color.BLACK,0.57f)
+                                  canvas.drawLine(ax,ay+1.6f*d,bx,by+1.6f*d,p)
+                                  p.strokeWidth=sw
+                                  p.color=if(filled) active else blend(muted,panel,0.48f)
+                                  if(filled) p.shader=LinearGradient(ax,ay,bx,by,
+                                      lightActive,darkActive,Shader.TileMode.CLAMP)
+                                  canvas.drawLine(ax,ay,bx,by,p)
+                                  p.shader=null
+                                  if(filled) {
+                                      p.strokeWidth=(if(mini) 0.7f else 1.5f)*d
+                                      p.color=Color.argb(170,255,255,255)
+                                      canvas.drawLine(ax-0.7f*d,ay-0.7f*d,bx-0.7f*d,by-0.7f*d,p)
+                                  }
+                              }
+                              p.style=Paint.Style.STROKE
+                              p.strokeWidth=(if(mini) 1.3f else 2.4f)*d
+                              p.color=blend(muted,active,0.34f)
+                              canvas.drawCircle(cx,cy,radius*0.78f,p)
+                              p.color=blend(panel,white,0.34f)
+                              canvas.drawCircle(cx,cy,radius*0.70f,p)
+                          }
+                      }
+                  }
+              }
+          
+          '''
+          ix=main.index(start)
+          jx=main.index(end,ix)
+          main=main[:ix]+new_battery+main[jx:]
+          
+          # Remove the long preview cards from the main settings page; make a single entry.
+          main=once(main,
+          '''        addBatteryRingSettings(root)
+                  gap(root,26)''',
+          '''        val indicatorMenu = text("◉   Вигляд індикатора     ›", 17f, white, true).apply {
+                      background = shape(panel, 20, green)
+                      setPadding(dp(18), dp(18), dp(18), dp(18))
+                      setOnClickListener { showBatteryIndicatorStyles() }
+                  }
+                  add(root, indicatorMenu); gap(root,26)''',
+          'one settings entry instead of cards')
+          # Existing style cards with real Canvas previews are moved into a dedicated screen.
+          menu = r'''    private fun showBatteryIndicatorStyles() {
+                  currentScreen = "battery_styles"
+                  active = false
+                  handler.removeCallbacks(tick)
+                  val root = column().apply {
+                      background = forestBackground()
+                      setPadding(dp(18), dp(24), dp(18), dp(28))
+                  }
+                  val back = text("‹   Налаштування", 18f, green, true).apply {
+                      setPadding(dp(2), dp(8), dp(2), dp(8))
+                      setOnClickListener { showSettings() }
+                  }
+                  add(root, back)
+                  gap(root, 14)
+                  addBatteryRingSettings(root)
+                  setContentView(ScrollView(this).apply {
+                      background = forestBackground()
+                      isFillViewport = true
+                      addView(root)
+                  })
+              }
+          
+          '''
+          main=once(main,'    private fun showSettings() {',menu+'    private fun showSettings() {','create indicator submenu')
+          main=once(main,'            "outage_settings" -> showSettings()',
+                        '            "outage_settings", "battery_styles" -> showSettings()',
+                        'Android Back button returns to settings from indicator styles')
+          main=once(main,'"48 окремих поділок навколо диска"',
+                        '"48 об’ємних потовщених поділок навколо диска"',
+                        'update pastel style label')
+          
+          # Add a reusable palette-matched update-check dialog, without changing download,
+          # checksum validation, installation or GitHub release selection.
+          new_dialog=r'''    /** Custom update-check dialog in the same six palettes as MainActivity. */
+              private fun showStyledCheckDialog(activity: Activity, heading: String, message: String,
+                  primaryLabel: String = "Добре", secondaryLabel: String? = null,
+                  onPrimary: (() -> Unit)? = null) {
+                  val themes = arrayOf(
+                      intArrayOf(0xFF103B37.toInt(),0xFF235D56.toInt(),0xFF72D8BB.toInt(),0xFFF5FFFB.toInt(),0xFFC1E4DB.toInt()),
+                      intArrayOf(0xFF153A64.toInt(),0xFF275A8A.toInt(),0xFF7DCBFF.toInt(),0xFFF5FAFF.toInt(),0xFFC3DDF3.toInt()),
+                      intArrayOf(0xFF352457.toInt(),0xFF534078.toInt(),0xFFC7A5FF.toInt(),0xFFFCF7FF.toInt(),0xFFDFD0F3.toInt()),
+                      intArrayOf(0xFF572A40.toInt(),0xFF81425B.toInt(),0xFFFFB1C7.toInt(),0xFFFFF7FA.toInt(),0xFFF1CCD8.toInt()),
+                      intArrayOf(0xFF61402E.toInt(),0xFF896047.toInt(),0xFFFFD09B.toInt(),0xFFFFF9F2.toInt(),0xFFF1CCD8.toInt()),
+                      intArrayOf(0xFF253451.toInt(),0xFF405575.toInt(),0xFFA9C8FF.toInt(),0xFFF7FAFF.toInt(),0xFFCEDBF0.toInt())
+                  )
+                  val p = activity.getSharedPreferences(PREFS, Activity.MODE_PRIVATE)
+                  val theme = themes[p.getInt("palette_index", 0).coerceIn(0, themes.lastIndex)]
+                  val (bg, panel, accent, ink, muted) = theme.toList()
+                  val density = activity.resources.displayMetrics.density
+                  fun dp(n: Int) = (n*density+0.5f).toInt()
+                  fun shape(color: Int, radius: Int, border: Int? = null) =
+                      android.graphics.drawable.GradientDrawable().apply {
+                          setColor(color)
+                          cornerRadius=dp(radius).toFloat()
+                          if(border!=null) setStroke(dp(1), border)
+                      }
+                  fun txt(value: String, size: Float, color: Int, bold: Boolean = false) =
+                      TextView(activity).apply {
+                          text=value
+                          textSize=size
+                          setTextColor(color)
+                          if(bold) typeface=android.graphics.Typeface.DEFAULT_BOLD
+                          gravity=android.view.Gravity.CENTER_VERTICAL
+                      }
+                  val root=android.widget.LinearLayout(activity).apply {
+                      orientation=android.widget.LinearLayout.VERTICAL
+                      setPadding(dp(23),dp(23),dp(23),dp(22))
+                      background=shape(panel,24,accent)
+                  }
+                  val head=android.widget.LinearLayout(activity).apply {
+                      orientation=android.widget.LinearLayout.HORIZONTAL
+                      gravity=android.view.Gravity.CENTER_VERTICAL
+                  }
+                  head.addView(txt("ϟ",31f,accent,true),
+                      android.widget.LinearLayout.LayoutParams(dp(37),-2))
+                  head.addView(txt("OukitelMonitor",21f,ink,true))
+                  root.addView(head)
+                  root.addView(txt(heading,19f,accent,true).apply {
+                      setPadding(0,dp(17),0,dp(10))
+                  })
+                  root.addView(txt(message,15f,muted).apply {
+                      setPadding(0,0,0,dp(20))
+                  })
+                  val actions=android.widget.LinearLayout(activity).apply {
+                      orientation=android.widget.LinearLayout.HORIZONTAL
+                      gravity=android.view.Gravity.END
+                  }
+                  val primary=txt(primaryLabel,15f,bg,true).apply {
+                      gravity=android.view.Gravity.CENTER
+                      setPadding(dp(17),dp(13),dp(17),dp(13))
+                      background=shape(accent,14)
+                  }
+                  val secondary=secondaryLabel?.let { label ->
+                      txt(label,15f,ink,true).apply {
+                          gravity=android.view.Gravity.CENTER
+                          setPadding(dp(15),dp(13),dp(15),dp(13))
+                          background=shape(bg,14)
+                      }
+                  }
+                  if(secondary!=null) {
+                      actions.addView(secondary, android.widget.LinearLayout.LayoutParams(0,-2,1f).apply {
+                          rightMargin=dp(9)
+                      })
+                  }
+                  actions.addView(primary,android.widget.LinearLayout.LayoutParams(
+                      if(secondary==null) -1 else 0,-2,if(secondary==null) 0f else 1f))
+                  root.addView(actions)
+                  val dialog=AlertDialog.Builder(activity).setView(root).setCancelable(true).create()
+                  secondary?.setOnClickListener { dialog.dismiss() }
+                  primary.setOnClickListener { dialog.dismiss(); onPrimary?.invoke() }
+                  dialog.show()
+                  dialog.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT))
+                  dialog.window?.setLayout((activity.resources.displayMetrics.widthPixels*0.89f).toInt(),
+                      android.view.WindowManager.LayoutParams.WRAP_CONTENT)
+              }
+          
+          '''
+          upd=once(upd,'    fun checkForUpdates(activity: Activity, quiet: Boolean) {',
+                   new_dialog+'    fun checkForUpdates(activity: Activity, quiet: Boolean) {',
+                   'theme-aware update result dialog helper')
+          upd=once(upd,
+          '''                        AlertDialog.Builder(activity).setTitle("Оновлень немає")
+                                      .setMessage("Встановлено Oukitel Monitor $installed. Це актуальна версія.")
+                                      .setPositiveButton("Добре", null).show()''',
+          '''                        showStyledCheckDialog(activity, "Оновлень немає",
+                                      "Встановлено OukitelMonitor $installed. У тебе актуальна версія.")''',
+                   'style no-updates result')
+          upd=once(upd,
+          '''                    AlertDialog.Builder(activity)
+                                  .setTitle("Доступне оновлення $version")
+                                  .setMessage("Установлено: $installed\\nНова версія: $version\\n\\nЗавантажити підписаний APK з нашого GitHub?")
+                                  .setNegativeButton("Пізніше", null)
+                                  .setPositiveButton("Завантажити") { _, _ -> downloadAndInstall(activity, release) }
+                                  .show()''',
+          '''                    showStyledCheckDialog(activity, "Доступне оновлення $version",
+                                  "Встановлено: $installed\\nНова версія: $version\\n\\nЗавантажити підписане оновлення з GitHub?",
+                                  primaryLabel = "Завантажити", secondaryLabel = "Пізніше") {
+                                  downloadAndInstall(activity, release)
+                              }''',
+                   'style available-update result')
+          upd=once(upd,
+          '''                    AlertDialog.Builder(activity).setTitle("Не вдалося перевірити оновлення")
+                                  .setMessage(ex.message ?: "Немає відповіді")
+                                  .setPositiveButton("Добре", null).show()''',
+          '''                    showStyledCheckDialog(activity, "Помилка перевірки оновлень",
+                                  ex.message ?: "Немає відповіді")''',
+                   'style update check failure')
+          
+          gradle=once(gradle,'versionName = "2.12"','versionName = "2.13"','release version bump')
+          MAIN.write_text(main,encoding='utf8')
+          UPD.write_text(upd,encoding='utf8')
+          GRADLE.write_text(gradle,encoding='utf8')
+          print('OukitelMonitor 2.13: five 3D-style battery gauges; submenu; themed check-update dialogs')
+          PY
 
       - name: Set up Java 17
         uses: actions/setup-java@v4
