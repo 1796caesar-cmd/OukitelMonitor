@@ -1468,3 +1468,106 @@ _gradle211 = one(_gradle211, 'versionName = "2.10"',
 MAIN.write_text(_main211, encoding='utf-8')
 GRADLE.write_text(_gradle211, encoding='utf-8')
 print('OukitelMonitor 2.11: five distinct battery styles, actual themed previews, persistent selection')
+
+
+# 2.12 — common green/amber/red charge scale for ALL five indicators;
+# symmetric synchronized Techno arcs; thicker minimalist arc with no glyph.
+# Keep all 2.11 designs, saved settings, charts, telemetry and updater intact.
+_main212 = MAIN.read_text(encoding='utf-8')
+_gradle212 = GRADLE.read_text(encoding='utf-8')
+
+# Charge color is universal across the six visual themes.  Decorative track,
+# text and panel colors still follow the selected palette.
+_main212 = one(_main212,
+    '''            // Alert red/amber remain meaningful at critical battery levels.
+            // At normal levels, the accent is always the user's current palette.
+            val chargeColor = when {
+                amount <= 15 -> Color.rgb(238, 82, 73)
+                amount <= 30 -> Color.rgb(244, 180, 62)
+                else -> green
+            }''',
+    '''            // The SAME color thresholds apply to all five drawing styles:
+            // green at 31–100%, amber at 16–30%, red at 0–15%.
+            // Track, text and background remain adaptable to the chosen theme.
+            val chargeColor = when {
+                amount <= 15 -> Color.rgb(238, 82, 73)
+                amount <= 30 -> Color.rgb(244, 180, 62)
+                else -> Color.rgb(43, 203, 101)
+            }''',
+    '2.12: shared fixed battery gauge colors')
+
+# Techno arcs each represent the ENTIRE charge level, not two consecutive
+# halves. Fill both from the TOP towards the BOTTOM for mirror symmetry.
+_main212 = one(_main212,
+    '''                    // Entire charge across two halves: one gauge fills from 0-50%,
+                    // and the next from 50-100%, retaining exact center percentage.''',
+    '''                    // Both side arcs show the entire 0–100% charge,
+                    // shrinking together instead of being 50% segments.''',
+    '2.12: explain synchronized techno arcs')
+_main212 = one(_main212,
+    '''                    val rightFill = (ratio * 2f).coerceIn(0f, 1f)
+                    val leftFill = (ratio * 2f - 1f).coerceIn(0f, 1f)''',
+    '''                    val rightFill = ratio
+                    val leftFill = ratio''',
+    '2.12: symmetric charge fractions')
+_old_left212 = 'canvas.drawArc(arc, 109f, 142f*leftFill, false, p)'
+_new_left212 = 'canvas.drawArc(arc, 251f, -142f*leftFill, false, p)'
+if _main212.count(_old_left212) != 2:
+    raise RuntimeError('2.12: techno left glow/foreground arcs not found')
+_main212 = _main212.replace(_old_left212, _new_left212)
+
+# Minimal: sufficiently prominent at normal dashboard size and in previews.
+_main212 = one(_main212,
+    '                    // Minimal: one airy, thin, OPEN 270-degree arc.\n'
+    '                    val thin = (if (mini) 7f else 12f)*d',
+    '                    // Minimal: a bold OPEN 270-degree arc, no battery glyph.\n'
+    '                    val thin = (if (mini) 11f else 22f)*d',
+    '2.12: wider minimalist arc')
+_glyph_begin212 = '                    // Tiny battery glyph above center text.\n'
+_glyph_end212 = '                }\n                else -> {'
+if _main212.count(_glyph_begin212) != 1:
+    raise RuntimeError('2.12: cannot find minimalist battery icon')
+_glyph_a212 = _main212.index(_glyph_begin212)
+_glyph_b212 = _main212.index(_glyph_end212, _glyph_a212)
+_main212 = _main212[:_glyph_a212] + _main212[_glyph_b212:]
+
+# The actual liquid gauge rim and the pastel dial's decorative inner lines
+# must also respect the red/amber warnings, not remain palette-accent colored.
+_main212 = one(_main212,
+    '                    p.color = blend(green, white, 0.2f)\n'
+    '                    canvas.drawCircle(cx, cy, radius, p)',
+    '                    p.color = chargeColor\n'
+    '                    canvas.drawCircle(cx, cy, radius, p)',
+    '2.12: liquid rim uses charge status color')
+_main212 = one(_main212,
+    '                            blend(panel, green, 0.30f), panel)',
+    '                            blend(panel, chargeColor, 0.30f), panel)',
+    '2.12: pastel disk respects charge state')
+_main212 = one(_main212,
+    '                    p.color = blend(muted, green, 0.4f)',
+    '                    p.color = blend(muted, chargeColor, 0.4f)',
+    '2.12: pastel decorative guide changes with charge status')
+
+# Names and labels are displayed beside REAL previews of the same renderer.
+_main212 = one(_main212,
+    '            "Дві неонові дуги з приладовими контурами",',
+    '            "Дві синхронні дуги з приладовими контурами",',
+    '2.12: synchronized techno subtitle')
+_main212 = one(_main212,
+    '            "Тонка відкрита дуга",',
+    '            "Товста відкрита дуга без значка батарейки",',
+    '2.12: minimal gauge subtitle')
+_main212 = one(_main212,
+    '''        add(root, text("Стиль зберігається після перезапуску. Колір відповідає обраній темі, " +
+            "а при низькому заряді зберігається попередження жовтим або червоним.", 12f, muted))''',
+    '''        add(root, text("Колір усіх шкал: 31–100% — зелений, 16–30% — жовто-помаранчевий, " +
+            "0–15% — червоний. Фон, текст і декоративні елементи відповідають темі. " +
+            "Вибір стилю зберігається після перезапуску.", 12f, muted))''',
+    '2.12: describe shared color thresholds')
+
+_gradle212 = one(_gradle212, 'versionName = "2.11"',
+    'versionName = "2.12"', '2.12 release version')
+
+MAIN.write_text(_main212, encoding='utf-8')
+GRADLE.write_text(_gradle212, encoding='utf-8')
+print('OukitelMonitor 2.12: unified battery thresholds, synchronized twin arcs, bold minimal no icon')
