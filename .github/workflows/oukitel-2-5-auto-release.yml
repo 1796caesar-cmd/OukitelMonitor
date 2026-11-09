@@ -470,6 +470,429 @@ jobs:
           print('OukitelMonitor 2.13: five 3D-style battery gauges; submenu; themed check-update dialogs')
           PY
 
+      - name: Apply OukitelMonitor 2.15 themed backgrounds
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          BACKGROUND_KOTLIN = r'''package com.oukitel.monitor
+
+          import android.content.Context
+          import android.graphics.Bitmap
+          import android.graphics.BitmapShader
+          import android.graphics.Canvas
+          import android.graphics.Color
+          import android.graphics.ColorFilter
+          import android.graphics.LinearGradient
+          import android.graphics.Matrix
+          import android.graphics.Paint
+          import android.graphics.Path
+          import android.graphics.PixelFormat
+          import android.graphics.RadialGradient
+          import android.graphics.RectF
+          import android.graphics.Shader
+          import android.graphics.drawable.Drawable
+          import java.util.LinkedHashMap
+          import java.util.Random
+          import kotlin.math.max
+
+          /** Five theme-aware, deterministic background surfaces, drawn locally (no network or images). */
+          object InterfaceBackground {
+              private const val W = 360
+              private const val H = 720
+              private val cache = object : LinkedHashMap<String, Bitmap>(10, 0.75f, true) {
+                  override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Bitmap>?): Boolean = size > 8
+              }
+
+              private fun mix(a: Int, b: Int, x: Float): Int {
+                  val r = x.coerceIn(0f, 1f)
+                  return Color.rgb(
+                      (Color.red(a)*(1-r) + Color.red(b)*r).toInt(),
+                      (Color.green(a)*(1-r) + Color.green(b)*r).toInt(),
+                      (Color.blue(a)*(1-r) + Color.blue(b)*r).toInt()
+                  )
+              }
+
+              private fun tint(c: Int, a: Int): Int = Color.argb(a.coerceIn(0,255),
+                  Color.red(c), Color.green(c), Color.blue(c))
+
+              fun create(context: Context, base: Int, panel: Int, accent: Int,
+                         style: Int, intensity: Int, radiusDp: Int = 0,
+                         borderColor: Int? = null): Drawable = Pattern(
+                  context.resources.displayMetrics.density, base, panel, accent,
+                  style.coerceIn(0, 4), intensity.coerceIn(0, 2), radiusDp, borderColor
+              )
+
+              private class Pattern(
+                  private val density: Float, private val base: Int, private val panel: Int,
+                  private val accent: Int, private val style: Int, private val intensity: Int,
+                  private val radiusDp: Int, private val borderColor: Int?
+              ) : Drawable() {
+                  override fun draw(canvas: Canvas) {
+                      val b = bounds
+                      if (b.isEmpty) return
+                      val w = b.width().toFloat()
+                      val h = b.height().toFloat()
+                      val radius = radiusDp*density
+                      canvas.save()
+                      canvas.translate(b.left.toFloat(), b.top.toFloat())
+                      if (radius > 0f) {
+                          val clip = Path().apply { addRoundRect(RectF(0f,0f,w,h),
+                              radius,radius,Path.Direction.CW) }
+                          canvas.clipPath(clip)
+                      }
+                      val pic = getBitmap(base, panel, accent, style, intensity)
+                      val shader = BitmapShader(pic, Shader.TileMode.REPEAT, Shader.TileMode.REPEAT)
+                      val scale = w/W.toFloat()
+                      shader.setLocalMatrix(Matrix().apply { setScale(scale, scale) })
+                      val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
+                          this.shader = shader
+                      }
+                      canvas.drawRect(0f, 0f, w, h, paint)
+                      if (borderColor != null && radius > 0f) {
+                          val border = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                              color = borderColor
+                              style = Paint.Style.STROKE
+                              strokeWidth = max(1f, density)
+                          }
+                          val inset = border.strokeWidth/2f
+                          canvas.drawRoundRect(inset,inset,w-inset,h-inset,
+                              (radius-inset).coerceAtLeast(0f),(radius-inset).coerceAtLeast(0f),border)
+                      }
+                      canvas.restore()
+                  }
+                  override fun setAlpha(alpha: Int) { invalidateSelf() }
+                  override fun setColorFilter(colorFilter: ColorFilter?) { invalidateSelf() }
+                  @Deprecated("Deprecated in Android API")
+                  override fun getOpacity(): Int = PixelFormat.OPAQUE
+              }
+
+              @Synchronized private fun getBitmap(base: Int, panel: Int, accent: Int,
+                                                 style: Int, intensity: Int): Bitmap {
+                  val key = "$base:$panel:$accent:$style:$intensity"
+                  cache[key]?.let { return it }
+                  val bitmap = Bitmap.createBitmap(W,H,Bitmap.Config.ARGB_8888)
+                  val c = Canvas(bitmap)
+                  val p = Paint(Paint.ANTI_ALIAS_FLAG)
+                  val dark = mix(base, Color.BLACK, 0.14f)
+                  val top = mix(base, Color.WHITE, 0.08f)
+                  p.shader = LinearGradient(0f, 0f, W.toFloat(), H.toFloat(),
+                      intArrayOf(top, base, mix(base,panel,0.55f), dark),
+                      floatArrayOf(0f,0.33f,0.70f,1f),Shader.TileMode.CLAMP)
+                  c.drawRect(0f,0f,W.toFloat(),H.toFloat(),p)
+                  p.shader = null
+                  if (style == 0) {
+                      cache[key] = bitmap
+                      return bitmap
+                  }
+                  val rng = Random(2718281L + style*1009L + intensity*151L)
+                  val gain = floatArrayOf(0.55f, 1f, 1.5f)[intensity]
+                  fun alpha(v: Float) = (v*gain).toInt().coerceIn(0, 130)
+                  fun randx(): Float = rng.nextFloat()*W
+                  fun randy(): Float = rng.nextFloat()*H
+                  fun cloud(x: Float, y: Float, rx: Float, ry: Float, color: Int, opacity: Int) {
+                      c.save()
+                      c.translate(x,y)
+                      c.scale(rx,ry)
+                      p.style = Paint.Style.FILL
+                      p.shader = RadialGradient(0f,0f,1f,
+                          intArrayOf(tint(color, opacity), tint(color,opacity/3),Color.TRANSPARENT),
+                          floatArrayOf(0f,0.44f,1f),Shader.TileMode.CLAMP)
+                      c.drawCircle(0f,0f,1f,p)
+                      p.shader = null
+                      c.restore()
+                  }
+                  when(style) {
+                      1 -> { // Granite: mottled mineral grains and faint irregular veins.
+                          for (i in 0 until 26) {
+                              cloud(randx(),randy(), 25f+rng.nextFloat()*105f,
+                                  30f+rng.nextFloat()*130f,
+                                  if (i%2==0) panel else mix(base,Color.WHITE,0.28f),alpha(23f))
+                          }
+                          for (i in 0 until (650 + intensity*350)) {
+                              val bright = rng.nextBoolean()
+                              p.style = Paint.Style.FILL
+                              p.color = tint(if(bright) mix(accent,Color.WHITE,0.5f)
+                                             else Color.BLACK,alpha(if(bright) 22f else 20f))
+                              val r = 0.3f + rng.nextFloat()*1.1f
+                              c.drawCircle(randx(),randy(),r,p)
+                          }
+                          for (i in 0 until 14) {
+                              val x=randx(); val y=randy()
+                              val vein=Path().apply {
+                                  moveTo(x,y)
+                                  quadTo(x+12f+rng.nextFloat()*35f,y+10f,
+                                      x+32f+rng.nextFloat()*70f,y+45f+rng.nextFloat()*85f)
+                              }
+                              p.style=Paint.Style.STROKE
+                              p.strokeWidth=0.45f+rng.nextFloat()*0.8f
+                              p.color=tint(mix(accent,Color.WHITE,0.45f),alpha(26f))
+                              c.drawPath(vein,p)
+                          }
+                      }
+                      2 -> { // Facets: translucent polygonal surfaces and illuminated ridges.
+                          val cols=5; val rows=10
+                          val pts=Array(rows+1) { y -> Array(cols+1) { x ->
+                              floatArrayOf(x*W.toFloat()/cols+(rng.nextFloat()-0.5f)*35f,
+                                           y*H.toFloat()/rows+(rng.nextFloat()-0.5f)*35f) } }
+                          for (y in 0 until rows) for (x in 0 until cols) {
+                              val a=pts[y][x];val b=pts[y][x+1]
+                              val d=pts[y+1][x];val e=pts[y+1][x+1]
+                              val triangles=arrayOf(arrayOf(a,b,e),arrayOf(a,e,d))
+                              for ((idx,t) in triangles.withIndex()) {
+                                  val path=Path().apply {
+                                      moveTo(t[0][0],t[0][1]);lineTo(t[1][0],t[1][1])
+                                      lineTo(t[2][0],t[2][1]);close()
+                                  }
+                                  val c0=if((x+y+idx)%3==0) mix(accent,Color.WHITE,0.4f)
+                                         else if((x+y+idx)%3==1) Color.BLACK else panel
+                                  p.style=Paint.Style.FILL
+                                  p.color=tint(c0,alpha(19f+rng.nextFloat()*14f))
+                                  c.drawPath(path,p)
+                                  p.style=Paint.Style.STROKE
+                                  p.strokeWidth=0.5f
+                                  p.color=tint(mix(accent,Color.WHITE,0.45f),alpha(17f))
+                                  c.drawPath(path,p)
+                              }
+                          }
+                      }
+                      3 -> { // Matte smoky: low-contrast broad powdery charcoal plumes.
+                          for (i in 0 until 28) {
+                              val bright=i%3==0
+                              cloud(randx(),randy(),40f+rng.nextFloat()*170f,
+                                  24f+rng.nextFloat()*95f,
+                                  if(bright) mix(panel,Color.WHITE,0.24f) else Color.BLACK,
+                                  alpha(if(bright) 33f else 24f))
+                          }
+                          for (i in 0 until 180) {
+                              p.style=Paint.Style.FILL
+                              p.color=tint(mix(panel,Color.WHITE,0.32f),alpha(10f))
+                              c.drawCircle(randx(),randy(),0.4f+rng.nextFloat()*0.8f,p)
+                          }
+                      }
+                      else -> { // Fog: layered translucent wisps with atmospheric diffusion.
+                          for (i in 0 until 32) {
+                              val y = (i.toFloat()/32f)*H + (rng.nextFloat()-0.5f)*80f
+                              cloud(randx(),y,90f+rng.nextFloat()*145f,
+                                  28f+rng.nextFloat()*68f,
+                                  if(i%4==0) mix(accent,Color.WHITE,0.55f)
+                                  else mix(panel,Color.WHITE,0.4f),
+                                  alpha(if(i%4==0) 26f else 36f))
+                          }
+                          for (i in 0 until 8) {
+                              val x=randx()-40f; val y=randy()
+                              p.style=Paint.Style.STROKE
+                              p.strokeWidth=0.6f+rng.nextFloat()*1.1f
+                              p.color=tint(mix(accent,Color.WHITE,0.65f),alpha(18f))
+                              val path=Path().apply {
+                                  moveTo(x,y);cubicTo(x+70f,y-24f,x+160f,y+30f,x+260f,y-2f)
+                              }
+                              c.drawPath(path,p)
+                          }
+                      }
+                  }
+                  cache[key] = bitmap
+                  return bitmap
+              }
+          }
+          '''
+
+          """Android 2.15 applied after 2.13 patch: top-to-bottom techno + five themed backgrounds.
+          The user skipped the uninstalled 2.14 release. The version jumps directly 2.13 -> 2.15.
+          """
+          from pathlib import Path
+          ROOT=Path.cwd()
+          MAIN=ROOT/'app/src/main/java/com/oukitel/monitor/MainActivity.kt'
+          UPD=ROOT/'app/src/main/java/com/oukitel/monitor/UpdateManager.kt'
+          GRADLE=ROOT/'app/build.gradle.kts'
+          BACKGROUND=ROOT/'app/src/main/java/com/oukitel/monitor/InterfaceBackground.kt'
+          main=MAIN.read_text(encoding='utf-8')
+          upd=UPD.read_text(encoding='utf-8')
+          gradle=GRADLE.read_text(encoding='utf-8')
+
+          def once(s,old,new,label):
+              count=s.count(old)
+              if count!=1: raise RuntimeError(f'2.15 {label}: expected one anchor, found {count}: {old[:100]}')
+              return s.replace(old,new,1)
+
+          # Techno 2.14 correction is part of 2.15.  Both lower ends are fixed; the
+          # illuminated bars lose their TOP portions as the charge percentage decreases.
+          main=once(main,
+              '''                    arcStroke(arc, firstRight, sweep*ratio, width, active, true, false)
+                              arcStroke(arc, firstLeft, -sweep*ratio, width, active, true, false)''',
+              '''                    // The lower ends remain anchored: both top edges recede downwards.
+                              arcStroke(arc, firstRight+sweep*(1f-ratio), sweep*ratio,
+                                  width, active, true, false)
+                              arcStroke(arc, firstLeft-sweep*(1f-ratio), -sweep*ratio,
+                                  width, active, true, false)''',
+              'synchronized top-to-bottom techno discharge')
+
+          # Every existing app screen uses forestBackground(), including the nested
+          # address-picker, dashboard, statistics and the new battery style screen.
+          main=once(main,
+              '''    private fun forestBackground(): GradientDrawable = GradientDrawable(
+                  GradientDrawable.Orientation.TL_BR,
+                  intArrayOf(blend(bg, Color.WHITE, .08f), bg, blend(bg, panel, .55f), blend(bg, Color.BLACK, .12f))
+              )''',
+              '''    private fun forestBackground(): android.graphics.drawable.Drawable =
+                  InterfaceBackground.create(this, bg, panel, green,
+                      prefs().getInt("interface_background_style", 0),
+                      prefs().getInt("interface_background_intensity", 1))''',
+              'shared themed surface for all screens')
+
+          background_menu=r'''    /** Dedicated background style picker with real rendered previews. */
+              private fun showInterfaceBackgroundStyles() {
+                  currentScreen = "background_styles"
+                  active = false
+                  handler.removeCallbacks(tick)
+                  val root = column().apply {
+                      background = forestBackground()
+                      setPadding(dp(18), dp(23), dp(18), dp(28))
+                  }
+                  add(root, text("‹   Налаштування", 18f, green, true).apply {
+                      setPadding(dp(2), dp(8), dp(2), dp(8))
+                      setOnClickListener { showSettings() }
+                  })
+                  gap(root, 15)
+                  add(root, text("Фон інтерфейсу", 27f, white, true))
+                  gap(root, 8)
+                  add(root, text("П'ять текстур. Кожна підлаштовується під кольори обраної теми.",
+                      13f, muted))
+                  gap(root, 16)
+                  val names = arrayOf("Градієнт", "Граніт", "Геометричні грані",
+                      "Матовий димчастий", "Туман")
+                  val descriptions = arrayOf(
+                      "Плавні переходи кольорів",
+                      "Мінеральна фактура з прожилками",
+                      "Об'ємні полігональні поверхні",
+                      "М'які темні димчасті шари",
+                      "Повітряні світлі шари серпанку")
+                  val p = prefs()
+                  val selected = p.getInt("interface_background_style", 0).coerceIn(0, 4)
+                  val intensity = p.getInt("interface_background_intensity", 1).coerceIn(0, 2)
+                  for (i in names.indices) {
+                      val chosen = selected == i
+                      val card = row().apply {
+                          gravity = Gravity.CENTER_VERTICAL
+                          background = shape(if (chosen) palette.tile else panel, 20,
+                              if (chosen) green else null)
+                          setPadding(dp(10), dp(9), dp(11), dp(9))
+                          elevation = dp(3).toFloat()
+                      }
+                      val preview = View(this).apply {
+                          background = InterfaceBackground.create(this@MainActivity,
+                              bg, panel, green, i, intensity, 14, if (chosen) green else muted)
+                      }
+                      card.addView(preview, LinearLayout.LayoutParams(dp(100), dp(84)))
+                      val info = column().apply { setPadding(dp(13), 0, 0, 0) }
+                      add(info, text(names[i], 16f, white, true))
+                      gap(info, 5)
+                      add(info, text(descriptions[i], 12f, muted))
+                      gap(info, 7)
+                      add(info, text(if (chosen) "✓  Обрано" else "Натисни, щоб вибрати",
+                          12f, if (chosen) green else muted, chosen))
+                      card.addView(info, LinearLayout.LayoutParams(0, -2, 1f))
+                      add(root, card)
+                      gap(root, 10)
+                      card.setOnClickListener {
+                          if (p.getInt("interface_background_style", 0) != i) {
+                              p.edit().putInt("interface_background_style", i).apply()
+                              showInterfaceBackgroundStyles()
+                          }
+                      }
+                  }
+                  gap(root, 12)
+                  add(root, text("Інтенсивність текстури", 18f, white, true))
+                  gap(root, 8)
+                  val levels = arrayOf("Слабка", "Середня", "Виразна")
+                  val value = text(levels[intensity], 15f, green, true).apply {
+                      gravity = Gravity.CENTER
+                  }
+                  add(root, value)
+                  val slider = SeekBar(this).apply { max = 2; progress = intensity }
+                  add(root, slider)
+                  add(root, text("Слабка   ·   Середня   ·   Виразна", 12f, muted).apply {
+                      gravity = Gravity.CENTER
+                  })
+                  slider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                      override fun onProgressChanged(bar: SeekBar?, progress: Int, fromUser: Boolean) {
+                          value.text = levels[progress.coerceIn(0, 2)]
+                      }
+                      override fun onStartTrackingTouch(bar: SeekBar?) {}
+                      override fun onStopTrackingTouch(bar: SeekBar?) {
+                          if (p.getInt("interface_background_intensity", 1) != slider.progress) {
+                              p.edit().putInt("interface_background_intensity", slider.progress).apply()
+                              showInterfaceBackgroundStyles()
+                          }
+                      }
+                  })
+                  gap(root, 15)
+                  add(root, text("Узор не впливає на показники станції, сповіщення " +
+                      "чи графіки. Змінюється лише оформлення.", 12f, muted))
+                  setContentView(ScrollView(this).apply {
+                      background = forestBackground()
+                      isFillViewport = true
+                      addView(root)
+                  })
+              }
+
+          '''
+          main=once(main,'    private fun showSettings() {',background_menu+'    private fun showSettings() {',
+                    'new background settings screen')
+          main=once(main,
+              '        add(root, indicatorMenu); gap(root,26)',
+              '''        add(root, indicatorMenu); gap(root,12)
+                  val bgNames = arrayOf("Градієнт", "Граніт", "Геометричні грані",
+                      "Матовий димчастий", "Туман")
+                  settingsItem(root, "▧  Фон інтерфейсу",
+                      bgNames[prefs().getInt("interface_background_style", 0).coerceIn(0, 4)]) {
+                      showInterfaceBackgroundStyles()
+                  }
+                  gap(root,14)''',
+              'single background settings button')
+          main=once(main,
+              '"outage_settings", "battery_styles" -> showSettings()',
+              '"outage_settings", "battery_styles", "background_styles" -> showSettings()',
+              'Android Back navigation for new background screen')
+
+          # Reuse exactly the same texture engine for both themed update-check dialogs
+          # and the in-app download dialog, preserving controls/progress/checksum logic.
+          upd=once(upd,
+              '            background=shape(panel,24,accent)',
+              '''            background=InterfaceBackground.create(activity, bg, panel, accent,
+                          p.getInt("interface_background_style", 0),
+                          p.getInt("interface_background_intensity", 1), 24, accent)''',
+              'theme texture for update-check dialogs')
+          start='''            background = android.graphics.drawable.GradientDrawable(
+                          android.graphics.drawable.GradientDrawable.Orientation.TL_BR,
+                          intArrayOf(panelColor, pageColor)).apply {
+                          cornerRadius = dp(26).toFloat()
+                          setStroke(dp(2), accentColor)
+                      }'''
+          upd=once(upd,start,
+              '''            background = InterfaceBackground.create(activity,
+                          pageColor, panelColor, accentColor,
+                          activity.getSharedPreferences(PREFS, Activity.MODE_PRIVATE)
+                              .getInt("interface_background_style", 0),
+                          activity.getSharedPreferences(PREFS, Activity.MODE_PRIVATE)
+                              .getInt("interface_background_intensity", 1),
+                          26, accentColor)''',
+              'theme texture for APK download progress dialog')
+
+          gradle=once(gradle, 'versionName = "2.13"','versionName = "2.15"',
+                      'skip uninstalled 2.14 and bump directly to 2.15')
+
+          if BACKGROUND.exists():
+              raise RuntimeError('2.15: new texture renderer already exists')
+          # The self-contained renderer source is appended by the workflow packaging
+          # step as a Python raw literal assigned to BACKGROUND_KOTLIN.
+          BACKGROUND.write_text(BACKGROUND_KOTLIN,encoding='utf-8')
+          MAIN.write_text(main,encoding='utf-8')
+          UPD.write_text(upd,encoding='utf-8')
+          GRADLE.write_text(gradle,encoding='utf-8')
+          print('OukitelMonitor 2.15: top-to-bottom techno arcs + 5 themed backgrounds, 3 intensities')
+          PY
+
       - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
