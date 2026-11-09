@@ -628,3 +628,205 @@ gradle = one(gradle, 'versionName = "2.5"', 'versionName = "2.6"', 'bump to 2.6'
 MAIN.write_text(main, encoding='utf-8')
 GRADLE.write_text(gradle, encoding='utf-8')
 print('OukitelMonitor 2.6: nested outage settings with queue or official address browser')
+
+# 2.7 — experimental telemetry retrieval + detailed in-app APK download progress.
+# This is deliberately appended to the EXISTING 2.5/2.6 update script so the
+# existing one-Android-workflow GitHub Actions configuration remains unchanged.
+# Run AFTER the previous patch sections: versionName should be 2.6 here.
+from pathlib import Path as _Path27
+
+_service27_path = ROOT / 'app/src/main/java/com/oukitel/monitor/MonitorService.kt'
+_updater27_path = ROOT / 'app/src/main/java/com/oukitel/monitor/UpdateManager.kt'
+
+_main27 = MAIN.read_text(encoding='utf-8')
+_service27 = _service27_path.read_text(encoding='utf-8')
+_updater27 = _updater27_path.read_text(encoding='utf-8')
+_gradle27 = GRADLE.read_text(encoding='utf-8')
+
+# OFF by default. When turned OFF, neither the UI nor the background Service
+# sends batchControlDevice(high_frequency_reporting=3). Existing GET telemetry
+# requests, authentication, alerts and polling intervals remain untouched.
+_main27 = one(_main27,
+    '    private fun wakeCloud(s: Session) {\n',
+    '''    private fun wakeCloud(s: Session) {
+        if (!prefs().getBoolean("active_data_reporting_enabled", false)) return
+''', '2.7: disable high-frequency command in Activity by default')
+_service27 = one(_service27,
+    '    private fun wakeCloud(session: JSONObject) {\n',
+    '''    private fun wakeCloud(session: JSONObject) {
+        if (!prefs.getBoolean("active_data_reporting_enabled", false)) return
+''', '2.7: disable high-frequency command in background Service by default')
+
+# Track *successful, structurally valid background reads*, not attempted polls.
+# It is NOT the station's own timestamp (Wonderfree may return cached data).
+_service27 = one(_service27,
+    '''                val output = values[5]
+                StatisticsStore.record(this, battery, input, output)''',
+    '''                val output = values[5]
+                if (battery != null && input != null && output != null) {
+                    prefs.edit().putLong("background_last_valid_read_ms", System.currentTimeMillis()).apply()
+                }
+                StatisticsStore.record(this, battery, input, output)''',
+    '2.7: record a successful background snapshot')
+
+# Keep the main Settings screen uncluttered: a small radio group below background
+# controls, with immediate persistence; no app restart and no extra service.
+_retrieval27 = r'''    private fun addDataRetrievalSettings(root: LinearLayout) {
+        val p = prefs()
+        add(root, text("Отримання даних станції", 19f, white, true)); gap(root, 9)
+        add(root, text("Експериментальний режим · впливає і на екран додатка, і на фонове оновлення.", 13f, muted))
+        gap(root, 10)
+        val choice = RadioGroup(this).apply {
+            orientation = RadioGroup.VERTICAL
+            background = shape(panel, 18, green)
+            setPadding(dp(12), dp(8), dp(12), dp(8))
+        }
+        val normal = RadioButton(this).apply {
+            id = View.generateViewId()
+            text = "Звичайний — без примусової активації"
+            setTextColor(white)
+            textSize = 15f
+        }
+        val activeMode = RadioButton(this).apply {
+            id = View.generateViewId()
+            text = "Активний — як у попередніх версіях"
+            setTextColor(white)
+            textSize = 15f
+        }
+        choice.addView(normal)
+        choice.addView(activeMode)
+        choice.check(if (p.getBoolean("active_data_reporting_enabled", false)) activeMode.id else normal.id)
+        choice.setOnCheckedChangeListener { _, checkedId ->
+            val newActive = checkedId == activeMode.id
+            p.edit().putBoolean("active_data_reporting_enabled", newActive).apply()
+            Toast.makeText(this,
+                if (newActive) "Активне передавання увімкнено" else "Звичайне отримання даних увімкнено",
+                Toast.LENGTH_SHORT).show()
+        }
+        add(root, choice); gap(root, 8)
+        add(root, text("Звичайний режим лише читає показники Wonderfree. Активний додатково надсилає команду високочастотного передавання, яка може будити дисплей станції.", 12f, muted))
+        gap(root, 9)
+        val lastRead = p.getLong("background_last_valid_read_ms", 0L)
+        val lastTime = if (lastRead > 0L)
+            SimpleDateFormat("dd.MM.yyyy HH:mm", Locale("uk", "UA")).format(Date(lastRead))
+            else "ще немає"
+        add(root, text("Остання успішна фонова відповідь: $lastTime", 12f, green))
+        add(root, text("Час відповіді Wonderfree не гарантує, що дані станції свіжі.", 12f, muted))
+    }
+
+'''
+_main27 = one(_main27,
+    '    private fun showSettings() {',
+    _retrieval27 + '    private fun showSettings() {',
+    '2.7: data retrieval settings UI')
+_main27 = one(_main27,
+    '''        addBackgroundSettings(root)
+        gap(root,26)''',
+    '''        addBackgroundSettings(root)
+        gap(root,26)
+        addDataRetrievalSettings(root)
+        gap(root,26)''',
+    '2.7: insert retrieval options above outage settings')
+
+# The updater already had a horizontal bar, but it only jumped by 5 percent.
+# Use a visible percentage plus downloaded/total megabytes and report 1%
+# steps, with a time-throttled update when the integer percentage is unchanged.
+_old_progress27 = '''        val progress = ProgressBar(activity, null, android.R.attr.progressBarStyleHorizontal)
+        progress.max = 100
+        progress.progress = 0
+        val label = TextView(activity).apply {
+            text = "Завантаження: 0%"
+            setPadding(28, 18, 28, 16)
+        }
+        val content = android.widget.LinearLayout(activity).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding(45, 25, 45, 25)
+            addView(label)
+            addView(progress)
+        }
+        val dialog = AlertDialog.Builder(activity).setTitle("Оновлення Oukitel Monitor")
+            .setView(content).setCancelable(false).create()
+        dialog.show()'''
+_new_progress27 = '''        val progress = ProgressBar(activity, null, android.R.attr.progressBarStyleHorizontal)
+        progress.max = 100
+        progress.progress = 0
+        val mbTotal = release.size / 1_000_000.0
+        val label = TextView(activity).apply {
+            text = "0%"
+            textSize = 26f
+            gravity = android.view.Gravity.CENTER
+            setPadding(0, 8, 0, 4)
+        }
+        val sizeLabel = TextView(activity).apply {
+            text = String.format(Locale("uk", "UA"), "%.2f / %.2f МБ", 0.0, mbTotal)
+            textSize = 15f
+            gravity = android.view.Gravity.CENTER
+            setPadding(0, 0, 0, 14)
+        }
+        val content = android.widget.LinearLayout(activity).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            val inset = (20 * resourcesDisplayDensity(activity)).toInt()
+            setPadding(inset, inset, inset, inset)
+            addView(label)
+            addView(sizeLabel)
+            addView(progress)
+        }
+        val dialog = AlertDialog.Builder(activity).setTitle("Завантаження Oukitel Monitor ${release.version}")
+            .setView(content).setCancelable(false).create()
+        dialog.show()'''
+# No dependency on Activity.resources in the object: use a simple pure helper.
+_updater27 = one(_updater27,
+    '    private fun downloadAndInstall(activity: Activity, release: Release) {',
+    '''    private fun resourcesDisplayDensity(activity: Activity): Float = activity.resources.displayMetrics.density
+
+    private fun downloadAndInstall(activity: Activity, release: Release) {''',
+    '2.7: dialog padding helper')
+_updater27 = one(_updater27, _old_progress27, _new_progress27,
+    '2.7: download dialog with MB progress')
+_updater27 = one(_updater27,
+    '''                    var total = 0L
+                    var shown = -1''',
+    '''                    var total = 0L
+                    var shown = -1
+                    var lastUiTime = 0L''',
+    '2.7: update progress throttling')
+_updater27 = one(_updater27,
+    '''                                if (pct != shown && pct % 5 == 0) {
+                                    shown = pct
+                                    activity.runOnUiThread {
+                                        progress.progress = pct
+                                        label.text = "Завантаження: $pct%"
+                                    }
+                                }''',
+    '''                                val nowMs = System.currentTimeMillis()
+                                if (pct != shown || nowMs - lastUiTime >= 300L || total == release.size) {
+                                    shown = pct
+                                    lastUiTime = nowMs
+                                    val downloadedMb = total / 1_000_000.0
+                                    activity.runOnUiThread {
+                                        progress.progress = pct
+                                        label.text = "$pct%"
+                                        sizeLabel.text = String.format(Locale("uk", "UA"),
+                                            "%.2f / %.2f МБ", downloadedMb, mbTotal)
+                                    }
+                                }''',
+    '2.7: MB and percent in each update')
+_updater27 = one(_updater27,
+    '''                    if (total != release.size) throw IllegalStateException("APK завантажився не повністю")''',
+    '''                    if (total != release.size) throw IllegalStateException("APK завантажився не повністю")
+                    activity.runOnUiThread {
+                        progress.progress = 100
+                        label.text = "100%"
+                        sizeLabel.text = String.format(Locale("uk", "UA"),
+                            "%.2f / %.2f МБ · Перевірка файлу…", mbTotal, mbTotal)
+                    }''',
+    '2.7: APK verification state')
+
+_gradle27 = one(_gradle27, 'versionName = "2.6"', 'versionName = "2.7"', 'Android 2.7 versionName')
+
+# Changes are written only after every required anchor was found once.
+MAIN.write_text(_main27, encoding='utf-8')
+_service27_path.write_text(_service27, encoding='utf-8')
+_updater27_path.write_text(_updater27, encoding='utf-8')
+GRADLE.write_text(_gradle27, encoding='utf-8')
+print('OukitelMonitor 2.7: optional high-frequency command + detailed download dialog (MB, %, bar)')
