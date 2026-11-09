@@ -869,18 +869,10 @@ _main28 = one(_main28,
     '    private fun showOutageSettingsPage() {\n        currentAddressLookup?.close()\n        currentAddressLookup = null',
     '2.8: cleanup hidden address lookup')
 
-# A real device test confirmed normal GET-only reads do not refresh reliably.
-# On the first run of 2.8, use the proven previous active mode automatically.
-# Users can still change the experimental setting themselves afterwards.
-_main28 = one(_main28,
-    'override fun onCreate(savedInstanceState: Bundle?) { super.onCreate();',
-    'override fun onCreate(savedInstanceState: Bundle?) { super.onCreate();\n'
-    '        val p28 = prefs()\n'
-    '        if (!p28.getBoolean("reporting_mode_28_initialized", false)) {\n'
-    '            p28.edit().putBoolean("active_data_reporting_enabled", true)\n'
-    '                .putBoolean("reporting_mode_28_initialized", true).apply()\n'
-    '        }\n',
-    '2.8: migration to tested active reporting')
+# No first-run preference migration is needed: the 2.9 patch below removes
+# the experimental choice and makes active reporting unconditional in both
+# MainActivity and MonitorService. Do not edit onCreate: earlier patches can
+# legitimately change its formatting and the 2.9 build must stay compatible.
 _gradle28 = one(_gradle28, 'versionName = "2.7"', 'versionName = "2.8"', '2.8 version')
 
 # Only write after every match was checked.
@@ -930,13 +922,6 @@ _main29 = one(_main29,
     '''        addDataRetrievalSettings(root)
         gap(root,26)
 ''', '', '2.9: remove experimental settings entry')
-_main29 = one(_main29,
-    '''        val p28 = prefs()
-        if (!p28.getBoolean("reporting_mode_28_initialized", false)) {
-            p28.edit().putBoolean("active_data_reporting_enabled", true)
-                .putBoolean("reporting_mode_28_initialized", true).apply()
-        }
-''', '', '2.9: remove old experimental migration')
 
 # The 2.4 chart keeps zoom/pan and resetZoom() shows the entire selected period.
 # Show the last ~60 minutes of REAL samples whenever its data period opens.
